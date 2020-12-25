@@ -16,7 +16,7 @@ local rpr, gfx = reaper, gfx
 -----------------------------------------  Just for debugging
 local DO_DEBUG = true
 local function Msg(str)
-   if DO_DEBUG then reaper.ShowConsoleMsg(tostring(str).."\n") end
+   if DO_DEBUG then rpr.ShowConsoleMsg(tostring(str).."\n") end
 end
 -------------------------------------------
 local MFXlist = 
@@ -44,7 +44,13 @@ local MFXlist =
   
   SLOT_HEIGHT = 12, -- pixels high
   
-  MATCH_UPTOCOLON = "(.-:)"
+  MATCH_UPTOCOLON = "(.-:)",
+  
+  WIN_X = 1000,
+  WIN_Y = 200,
+  WIN_W = 200,
+  WIN_H = 200,
+  LEFT_ARRANGEDOCKER = 512+1, -- 512 = left of arrange view, +1 == docked
 }
 
 local CURR_PROJ = 0
@@ -73,6 +79,22 @@ local function tprint (tbl, indent)
   toprint = toprint .. string.rep(" ", indent-2) .. "}"
   return toprint
 end
+--------------------------------------------------------
+local function collectFX(track)
+  assert(track, "collectFX: invalid parameter - track")
+  
+  local fxtab = {}
+  
+  local numfx = rpr.TrackFX_GetCount(track)
+  for i = 1, numfx do
+    local _, fxname = rpr.TrackFX_GetFXName(track, i-1, "")
+    local fxtype = fxname:match(MFXlist.MATCH_UPTOCOLON) or "VID:"  -- Video processor FX don't have prefixes
+    fxname = fxname:gsub(MFXlist.MATCH_UPTOCOLON.."%s", "") -- up to colon and then space, replace by nothing
+    local enabled =  rpr.TrackFX_GetEnabled(track, i-1)
+    table.insert(fxtab, {fxname = fxname, fxtype = fxtype, enabled = enabled}) -- confusing <key, value> pairs here, but it works
+  end
+  return fxtab
+end
 ---------------------------------------------------------------------------
 local function getTrackInfo(track)
   assert(track, "getTrackInfo: invalid parameter - track")
@@ -82,8 +104,9 @@ local function getTrackInfo(track)
   local enabled = rpr.GetMediaTrackInfo_Value(track, "I_FXEN") ~= 0 -- fx enabled, 0=bypassed, !0=fx active
   local height = rpr.GetMediaTrackInfo_Value(track, "I_WNDH") -- current TCP window height in pixels including envelopes
   local posy = rpr.GetMediaTrackInfo_Value(track, "I_TCPY") -- current TCP window Y-position in pixels relative to top of arrange view
+  local fx = collectFX(track)
   
-  return {track = track, name = name, visible = visible, enabled = enabled, height = height, posy = posy}
+  return {track = track, name = name, visible = visible, enabled = enabled, height = height, posy = posy, fx = fx}
 end
 ------------------------------
 local function collectTracks()
@@ -104,35 +127,93 @@ local function collectTracks()
   
   return tracks
 end
---------------------------------------------------------
-local function collectFX(track)
-  assert(track, "collectFX: invalid parameter - track")
-  
-  local fxtab = {}
-  
-  local numfx = rpr.TrackFX_GetCount(track)
-  for i = 1, numfx do
-    local _, fxname = rpr.TrackFX_GetFXName(track, i-1, "")
-    local fxtype = fxname:match(MFXlist.MATCH_UPTOCOLON) or "VID:"  -- Video processor FX don't have prefixes
-    fxname = fxname:gsub(MFXlist.MATCH_UPTOCOLON.."%s", "") -- up to colon and then space, replace by nothing
-    local enabled =  rpr.TrackFX_GetEnabled(track, i-1)
-    table.insert(fxtab, {fxname = fxname, fxtype = fxtype, enabled = enabled}) -- confusing key, value pairs here, but it works
-  end
-  return fxtab
+------------------------------------------------
+local function openWindow()
+  gfx.clear = 0
+  gfx.init(MFXlist.SCRIPT_NAME, MFXlist.WIN_W, MFXlist.WIN_H, MFXlist.LEFT_ARRANGEDOCKER, MFXlist.WIN_X, MFXlist.WIN_Y)
 end
------------------------------------------------- It all starts here, really
-Msg("MFX-list ******")
---Msg("Num tracks: "..rpr.CountTracks(CURR_PROJ))
+-----------------------------
+local function exitScript()
+  Msg("Bye, bye")
+end -- exitScrip
+------------------------------------------------ 
+local function initializeScript()
+  rpr.atexit(exitScript)
+  openWindow()
+end -- initializeScript
+------------------------------------------------ Here is the main loop
+local function mfxlistMain()
+  collectTracks()
+  
+  local dstate, x, y, w, h = gfx.dock(-1, x, y, w, h)
+  if gfx.char == -1 or dstate ~= MFXlist.LEFT_ARRANGEDOCKER then
+    Msg("dock state: "..dstate)
+    gfx.quit()
+    return
+  end
+  
+  rpr.defer(mfxlistMain)
+end -- mfxlistMain
+------------------------------------------------ This one's for testing and debuggin
+local function setupForTesting()
+  
+  local NEW_PROJTEMPLATE = "P:/Reaper6/ProjectTemplates/FabianNewDefault.RPP"
+  
+  local tracknames =
+  {
+    "First track",
+    "Track two",
+    "Wow!",
+    "Another one",
+    "Great stuff!",
+    "Quant suff.",
+    "Mantegeistmann",
+    "",
+  }
 
-local tracks = collectTracks()
--- Msg(tprint(tracks))
+  rpr.PreventUIRefresh(1)
+  
+  rpr.Main_OnCommand(40859, 0, 0) -- New project tab
+  rpr.Main_openProject("template:noprompt:"..NEW_PROJTEMPLATE)
+  
+  for i = 1, #tracknames do
+      rpr.InsertTrackAtIndex(i-1, true)
+      local track = rpr.GetTrack(CURR_PROJ, i-1)
+      rpr.GetSetMediaTrackInfo_String(track, 'P_NAME', tracknames[i], true)
+  end
+  
+  gfx.dock(1024, 0, 0, 0, 0)
+  
+  rpr.PreventUIRefresh(-1)
+  rpr.TrackList_AdjustWindows(true)
+  rpr.UpdateArrange()
+  
+end -- setUpFortesting
+------------------------------------
+local function showTracks(tracks)
 
 for i = 1, #tracks do
   local trinfo = tracks[i]
   local fxtable = collectFX(trinfo.track)
   Msg("Track: "..trinfo.name..", "..(trinfo.visible and "is vis" or "not vis")..", "..(trinfo.enabled and "fx enab" or "fx disab")..", "..trinfo.height..", "..trinfo.posy)
+  local fxtable = trinfo.fx
   for j = 1, #fxtable do
     local fx = fxtable[j]
     Msg(fx.fxtype.." "..fx.fxname..", "..(fx.enabled and "is enabled" or "not enabled"))
   end
 end
+end
+------------------------------------------------ It all starts here, really
+Msg("MFX-list ******")
+--Msg("Num tracks: "..rpr.CountTracks(CURR_PROJ))
+
+setupForTesting()
+initializeScript()
+
+local tracks = collectTracks()
+-- Msg(tprint(tracks))
+
+-- Msg(tprint(tracks))
+-- showTracks(tracks)
+
+mfxlistMain()
