@@ -33,10 +33,10 @@ local MFXlist =
   MOD_WIN = 32, 
   MOD_KEYS = 4+8+16+32, 
   
-  MENU_STR = "Show tracks|Show first track linear|Show first track smart|Quit",
+  MENU_STR = "Show tracks|Show first track|Show last track|Quit",
   MENU_SHOWTRACKS = 1,
-  MENU_SHOWFIRSTLINEAR = 2,
-  MENU_SHOWFIRSTSMART = 3,
+  MENU_SHOWFIRSTTCP = 2,
+  MENU_SHOWLASTTCP = 3,
   MENU_QUIT = 4,
 
   COLOR_BLACK   = {012, 012, 012},
@@ -45,8 +45,9 @@ local MFXlist =
   COLOR_HIGHLIGHT = {},
   COLOR_EMPTYSLOT = {40, 40, 40},
   
-  FONT_NAME = "Arial",
-  FONT_SIZE = 8,
+  FONT_NAME1 = "Arial",
+  FONT_NAME2 = "Courier New",
+  FONT_SIZE = 14,
   
   SLOT_HEIGHT = 12, -- pixels high
   
@@ -59,14 +60,12 @@ local MFXlist =
   LEFT_ARRANGEDOCKER = 512+1, -- 512 = left of arrange view, +1 == docked
   
   TCP_HWND = nil, -- filled in when script initializes (so strictly speaking not constant, but yeah...)
-  TOP_LINEY = 112, -- don't know yet how to find the top of TCP, but see here https://forum.cockos.com/showthread.php?t=230919
+  TOP_LINEY = nil, -- Also filled in when initializing (meaningful to have it stored?)
 }
 
 local CURR_PROJ = 0
------------------------------------------------- This one's for testing and debuggin
-local function setupForTesting(num)
-  
-  local NEW_PROJTEMPLATE = "P:/Reaper6/ProjectTemplates/FabianNewDefault.RPP"
+------------------------------------------------ These are for testing and debuggin
+local function addTracksForTesting(num)
   
   local tracknames =
   {
@@ -79,11 +78,6 @@ local function setupForTesting(num)
     "Mantergeistmann",
     "",
   }
-
-  rpr.PreventUIRefresh(1)
-  
-  rpr.Main_OnCommand(40859, 0, 0) -- New project tab
-  rpr.Main_openProject("template:noprompt:"..NEW_PROJTEMPLATE)
   
   if num == nil then num = #tracknames end
   
@@ -100,6 +94,19 @@ local function setupForTesting(num)
   for i = 1, remains do
     rpr.InsertTrackAtIndex(count+i-1, true)
   end
+  
+end -- addTracksForTesting
+-----------------------------------
+local function setupForTesting(num)
+  
+  local NEW_PROJTEMPLATE = "P:/Reaper6/ProjectTemplates/FabianNewDefault.RPP"
+  
+  rpr.PreventUIRefresh(1)
+  
+  rpr.Main_OnCommand(40859, 0, 0) -- New project tab
+  rpr.Main_openProject("template:noprompt:"..NEW_PROJTEMPLATE)
+  
+  addTracksForTesting(num)
   
   --gfx.dock(MFXlist.LEFT_ARRANGEDOCKER, 0, 0, 0, 0)
   
@@ -157,7 +164,8 @@ local function FindChildByClass(hwnd, classname, occurance)
     end
   end
 end
----------------------------
+---------------------------------------------------------
+-- Returns the HWND and the screen coordinates of the TCP
 local function getTCPProperties()
 -- get first reaper child window with classname "REAPERTCPDisplay".
   local tcp_hwnd = FindChildByClass(rpr.GetMainHwnd(), 'REAPERTCPDisplay', 1)
@@ -180,6 +188,7 @@ local function collectFX(track)
     local _, fxname = rpr.TrackFX_GetFXName(track, i-1, "")
     local fxtype = fxname:match(MFXlist.MATCH_UPTOCOLON) or "VID:"  -- Video processor FX don't have prefixes
     fxname = fxname:gsub(MFXlist.MATCH_UPTOCOLON.."%s", "") -- up to colon and then space, replace by nothing
+    fxname = fxname:gsub("%([^()]*%)","")
     local enabled =  rpr.TrackFX_GetEnabled(track, i-1)
     table.insert(fxtab, {fxname = fxname, fxtype = fxtype, enabled = enabled}) -- confusing <key, value> pairs here, but it works
   end
@@ -226,7 +235,7 @@ local function collectTracks()
   return tracks
 end
 --------------------------------------------------------
-local function showTracks(tracks)
+local function showTracks(tracks) -- In console output
 
   for i = 1, #tracks do
     local trinfo = tracks[i]
@@ -255,65 +264,144 @@ local function getFirstTCPTrackLinear()
   end
 
   local numtracks = rpr.CountTracks(CURR_PROJ) -- excludes the master track, taken care of above
+  if numtracks == 0 then return nil, -1 end
+    
   for i = 1, numtracks do
     local track = rpr.GetTrack(CURR_PROJ, i-1)
     local posy, height = getTrackPosAndHeight(track)
     if height + posy > 0 then return track, i end -- rules out invisible track (height == 0) at the top (posy = 0)
   end
+  assert(nil, "getFirstTrackLinear: Should never get here!")
   
 end -- getFirstTCPTrackLinear
------------------------------------------------------------------------------------
--- The above linear search is inefficient for many tracks, here is smarter approach
-local function getFirstTCPTrackSmart()
-  -- Master track gets sepcial treatment, as above
+---------------------------------------
+local function getFirstTCPTrackBinary()
+  
   if rpr.GetMasterTrackVisibility() & 0x1 == 1 then -- Master track visible in TCP
     local master = rpr.GetMasterTrack(CURR_PROJ)
     local posy, height = getTrackPosAndHeight(master)
     if height + posy > 0 then return master, 0 end
   end
   
-  local numtracks = rpr.CountTracks(CURR_PROJ) -- excludes the master track, taken care of above
+  local numtracks = rpr.CountTracks(CURR_PROJ)
+  if numtracks == 0 then return nil, -1 end
   
-  local t0 = rpr.GetTrack(CURR_PROJ, 0)
-  local p0, h0 = getTrackPosAndHeight(t0)
-  if p0 + h0 > 0 then return t0, 1 end -- first track at posy = 0 with height = 0 is not valid 
+  local left, right = 0, numtracks - 1
+  while left <= right do
+    local index = math.floor((left + right) / 2)
+    local track = rpr.GetTrack(CURR_PROJ, index)
+    local posy, height = getTrackPosAndHeight(track)
+    if posy < 0 then
+      if posy + height > 0 then return track, index + 1 end
+      left = index + 1
+    elseif posy > 0 then
+      right = index - 1
+    else -- posy == 0, then this is the one
+      return track, index + 1
+    end      
+  end
+  assert(nil, "getFirstTCPTrackBinary: Should never get here!")
   
-  local tn = rpr.GetTrack(CURR_PROJ, numtracks-1)
-  local pn, hn = getTrackPosAndHeight(tn)
-  local _, name = rpr.GetTrackName(tn)
-  Msg("Track n: "..name)
+end -- getFirstTCÅTracksBinary
+---------------------------------------------------------------------------
+-- Does a binary search, halving and halving until it finds the rigth track
+-- If no tracks, or only the Master track is visible, this returns nil, 0
+-- But in that case getFirstTCPTrack has already returned either the master or -1
+local function getLastTCPTrackBinary(tcpheight)
+  assert(tcpheight, "getLastTCPTrack: invalid parameter - tcpheight")
+  
+  local numtracks = rpr.CountTracks(CURR_PROJ)
+  if numtracks == 0 then return nil, 0 end
+  
+  -- is the last track visible?, If so we are done
+  local track = rpr.GetTrack(CURR_PROJ, numtracks-1)
+  local posy, _ = getTrackPosAndHeight(track)
+  if posy < tcpheight then return track, numtracks end
+  
+  -- else, do a binary search
+  -- A linear search from the first visible track could be faster...
+  local left, right = 0, numtracks - 1
+  while left <= right do
+    local index = math.floor((left + right) / 2)
+    local track = rpr.GetTrack(CURR_PROJ, index)
+    local posy, height = getTrackPosAndHeight(track)
+    if posy < tcpheight then
+      if posy + height >= tcpheight then return track, index + 1 end
+      left = index + 1
+    elseif posy > tcpheight then
+      right = index - 1
+    else -- posy == tcpheight, the previous track is the last visible
+      local track = rpr.GetTrack(CURR_PROJ, index - 1)
+      return track, index
+    end
+  end
+
+  return nil, 0
+  
+end -- getLastTCPTrackLinear
+--------------------------------------------
+-- Tracks can be invisible for two reasons:
+-- 1. outside the TCP bounding box
+-- 2. have visibility property turned off
+local function collectVisibleTracks()
+  
+  local _, _, _, h = GetClientBounds(MFXlist.TCP_HWND)
+  
+  local _, findex = getFirstTCPTrackBinary()
+  local _, lindex = getLastTCPTrackBinary(h)
+  Msg("First/last visible track: "..findex..", "..lindex)
+  
+  local vistracks = {}
+  if findex < 0 then return vistracks end -- No visible tracks
+  if findex == 0 then -- master track is visible
+    local master = rpr.GetMasterTrack(CURR_PROJ)
+    local minfo = getTrackInfo(master)
+    table.insert(vistracks, minfo)
+    findex = 1
+  end
     
-  local len = pn - p0
-  local havg = len / numtracks -- average height of the tracks
+  for i = findex, lindex do
+    local track = rpr.GetTrack(CURR_PROJ, i-1)
+    local trinfo = getTrackInfo(track)
+    if trinfo.visible then table.insert(vistracks, trinfo) end
+  end
   
-  local c = math.floor(math.abs(p0) / havg) -- initial guess based on average height
-  Msg("p0: "..p0..", len: "..len..", havg: "..havg..", initial c: "..c)
+  --Msg(tprint(vistracks))
+  return vistracks
   
-  while true do -- not sure yet about the ending criterion, but should quit with return inside loop
-    local tc = rpr.GetTrack(CURR_PROJ, c-1)
-    local pc, hc = getTrackPosAndHeight(tc)
-    if pc == 0 and hc > 0 then -- don't want invisible track (h == 0)
-      return tc, c 
-    elseif pc < 0 then -- look forwards
-      local tc1 = rpr.GetTrack(CURR_PROJ, c)
-      local pc1, hc1 = getTrackPosAndHeight(tc1)
-      if pc1 > 0 then -- pc1 = pc + hc
-        return tc, c 
-      else -- pc1 < 0, still negative looh forwards
-        c = c+1
-      end
-    else -- pc > 0, look backwards
-      local tc1 = rpr.GetTrack(CURR_PROJ, c-2)
-      local pc1, hc1 = getTrackPosAndHeight(tc1)
-      if pc1 < 0 then -- pc1 = pc - hc1
-        return tc, c-1 
-      else -- pc1 < 0
-        c = c-1
-      end
+end -- collectVisibleTracks
+------------------------------
+local function drawTracks()
+  
+  gfx.r, gfx.g, gfx.b = 0, 0, 0
+  gfx.setfont(2, MFXlist.FONT_NAME1, MFXlist.FONT_SIZE)
+  
+  local x, y, _, h = GetClientBounds(MFXlist.TCP_HWND)
+  local _, drawy = gfx.screentoclient(x, y)
+    
+  local vistracks = collectVisibleTracks()
+  local numtracks = #vistracks
+  for i = 1, numtracks do 
+    local trinfo = vistracks[i]
+    local posy = trinfo.posy
+    local height = trinfo.height
+    gfx.rect(0, drawy + posy, gfx.w, height, 0)
+    --drawy = drawy + height
+    local fxlist = trinfo.fx
+    gfx.x, gfx.y = 0, drawy + posy    
+    for i = 1, #fxlist do
+      gfx.x = 0
+      --gfx.drawstr(trinfo.name, 1, gfx.w, gfx.y + MFXlist.FONT_SIZE) -- https://forum.cockos.com/showthread.php?t=226916
+      gfx.drawstr(fxlist[i].fxname, 1, gfx.w, gfx.y + MFXlist.FONT_SIZE)
+      gfx.y = gfx.y + MFXlist.FONT_SIZE
+      --Msg(trinfo.name..": "..fxlist[i].fxname)
     end
   end
   
-end -- getFirstTCPTrackSmart
+  gfx.r, gfx.g, gfx.b = 1, 1, 1
+  gfx.line(0, drawy + h, gfx.w, drawy + h)
+  
+end -- drawTracks
 ------------------------------------------------
 local function openWindow()
   gfx.clear = MFXlist.COLOR_EMPTYSLOT[1] + MFXlist.COLOR_EMPTYSLOT[2] * 256 + MFXlist.COLOR_EMPTYSLOT[3] * 65536
@@ -335,16 +423,17 @@ local function handleMenu(m_cap, mx, my)
     return ret
   elseif ret == MENU_SETUP10 then
     setupForTesting(10)
-  elseif ret == MFXlist.MENU_SHOWFIRSTLINEAR then
+  elseif ret == MFXlist.MENU_SHOWFIRSTTCP then
     local startt = rpr.time_precise()
-    local track, idx = getFirstTCPTrackLinear()
+    local track, idx = getFirstTCPTrackBinary()
     local endt = rpr.time_precise()
-    Msg("First visible track (linear): "..idx.." ("..endt-startt..")")
-  elseif ret == MFXlist.MENU_SHOWFIRSTSMART then
+    Msg("First visible track: "..idx.." ("..endt-startt..")")
+  elseif ret == MFXlist.MENU_SHOWLASTTCP then
+    local _, _, _, h = GetClientBounds(MFXlist.TCP_HWND)
     local startt = rpr.time_precise()
-    local track, idx = getFirstTCPTrackSmart()
+    local track, idx = getLastTCPTrackBinary(h)
     local endt = rpr.time_precise()
-    Msg("First visible track (smart): "..idx.." ("..endt-startt..")")
+    Msg("Last visible track: "..idx.." ("..endt-startt..")")
   elseif ret == MFXlist.MENU_SHOWTRACKS then
     local tracks = collectTracks()
     showTracks(tracks)
@@ -358,16 +447,21 @@ local function exitScript()
 end -- exitScrip
 ------------------------------------------------ 
 local function initializeScript()
+  
   rpr.atexit(exitScript)
   openWindow()
-  local hwnd, x, y, w, h = getTCPProperties()
+  local hwnd, x, y, w, h = getTCPProperties() -- screen coordinates
   assert(hwnd, "Could not get TCP HWND, cannot do much now")
   
   MFXlist.TCP_HWND = hwnd
-  -- gfx.line(0, MFXlist.TOP_LINEY, gfx.w, MFXlist.TOP_LINEY)
-  gfx.line(0, gfx.h-h, gfx.w, gfx.h-h)
+  local cx, cy = gfx.screentoclient(x, y)
+  gfx.line(0, cy, gfx.w, cy)
+  gfx.line(0, cy + h, gfx.w, cy + h)
   Msg("Dock: "..gfx.dock(-1)..", gfx.w: "..gfx.w..", gfx.h: "..gfx.h)
   Msg("TCP x: "..x..", y: "..y..", w: "..w..", h:"..h)
+  
+  drawTracks()
+  
 end -- initializeScript
 ------------------------------------------------ Here is the main loop
 local function mfxlistMain()
@@ -388,6 +482,8 @@ local function mfxlistMain()
   elseif mbr_down ~= MFXlist.MB_RIGHT and mbr_prev == MFXlist.MB_RIGHT then
     mbr_prev = 0
   end
+  
+  --drawTracks()
   
   -- Check if we are to quit or not
   local dstate = gfx.dock(-1)
@@ -418,9 +514,9 @@ mfxlistMain()
 
 --[[ Stuff on dockers and HWNDs
 https://forum.cockos.com/showthread.php?p=1507649#post1507649
+https://forum.cockos.com/showthread.php?t=230919
 https://forum.cockos.com/showthread.php?t=229668
 https://forum.cockos.com/showthread.php?t=212174
-https://forum.cockos.com/showthread.php?t=230919
 https://forum.cockos.com/showthread.php?t=222314
 https://forum.cockos.com/showthread.php?t=207081
 https://forum.cockos.com/showthread.php?p=2203603
