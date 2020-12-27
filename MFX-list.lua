@@ -19,8 +19,9 @@ local function Msg(str)
    if DO_DEBUG then rpr.ShowConsoleMsg(tostring(str).."\n") end
 end
 -------------------------------------------
+-- Globals
 local MFXlist = 
-{
+{ -- All capitals are constants, do not assign to these in the code
   SCRIPT_NAME = "MFX-list for Reaper",
   VERSION = "0.0.1",
   
@@ -33,8 +34,8 @@ local MFXlist =
   MOD_WIN = 32, 
   MOD_KEYS = 4+8+16+32, 
   
-  MENU_STR = "Show tracks|Show first track|Show last track|Quit",
-  MENU_SHOWTRACKS = 1,
+  MENU_STR = "Draw tracks|Show first track|Show last track|Quit",
+  MENU_DRAWTRACKS = 1,
   MENU_SHOWFIRSTTCP = 2,
   MENU_SHOWLASTTCP = 3,
   MENU_QUIT = 4,
@@ -44,12 +45,16 @@ local MFXlist =
   COLOR_JSFX    = {},
   COLOR_HIGHLIGHT = {},
   COLOR_EMPTYSLOT = {40, 40, 40},
+  COLOR_FAINT = {60, 60, 60},
   
   FONT_NAME1 = "Arial",
   FONT_NAME2 = "Courier New",
-  FONT_SIZE = 14,
+  FONT_SIZE1 = 14,
+  FONT_SIZE2 = 16,
+  FONT_FXNAME = 1,
+  FONT_HEADER = 2,
   
-  SLOT_HEIGHT = 12, -- pixels high
+  SLOT_HEIGHT = 13, -- pixels high
   
   MATCH_UPTOCOLON = "(.-:)",
   
@@ -57,10 +62,15 @@ local MFXlist =
   WIN_Y = 200,
   WIN_W = 200,
   WIN_H = 200,
-  LEFT_ARRANGEDOCKER = 512+1, -- 512 = left of arrange view, +1 == docked
+  LEFT_ARRANGEDOCKER = 512+1, -- 512 = left of arrange view, +1 == docked (probably not universally true)
   
   TCP_HWND = nil, -- filled in when script initializes (so strictly speaking not constant, but yeah...)
-  TOP_LINEY = nil, -- Also filled in when initializing (meaningful to have it stored?)
+  TOP_LINEY = nil, -- Set on every defer before calling any other function (meaningful to have it stored?)
+  BOT_LINEY = nil, -- Set on every defer before calling any other function (meaningful to have it stored=
+  
+  BLITBUF_HEAD = 16, -- off-screen draw buffer for the header
+  BLITBUF_HEADW = 300,
+  BLITBUF_HEADH = 300,
 }
 
 local CURR_PROJ = 0
@@ -250,8 +260,8 @@ local function showTracks(tracks) -- In console output
 end
 --------------------------------------------------------
 -- Find the index of the first track visible in the TCP
--- A track can be invisible from teh TCP for two reasons:
--- 1. It has its TCP visbility property set to false (and then its height seems to eb 0)
+-- A track can be invisible from the TCP for two reasons:
+-- 1. It has its TCP visbility property set to false, and then its height seems to be 0 (this is used)
 -- 2. It is outside of the TCP view rectangle, posy either negative or larger than TCP height
 local function getFirstTCPTrackLinear()
 -- This version does a linear search from index 0 looking for the first track for which posy+height > 0
@@ -277,22 +287,32 @@ end -- getFirstTCPTrackLinear
 ---------------------------------------
 local function getFirstTCPTrackBinary()
   
+  local fixForMasterTCPgap = false
+  
   if rpr.GetMasterTrackVisibility() & 0x1 == 1 then -- Master track visible in TCP
     local master = rpr.GetMasterTrack(CURR_PROJ)
     local posy, height = getTrackPosAndHeight(master)
     if height + posy > 0 then return master, 0 end
+    if height + posy == 0 then fixForMasterTCPgap = true end
   end
   
   local numtracks = rpr.CountTracks(CURR_PROJ)
   if numtracks == 0 then return nil, -1 end
   
+  -- When the MASTER posy + height == 0, then the 0th track is at posy == 5
+  -- And this is then the first visible track. Special case
+  if fixForMasterTCPgap then 
+    local track = rpr.GetTrack(CURR_PROJ, 0)
+    return track, 1
+  end
+    
   local left, right = 0, numtracks - 1
   while left <= right do
     local index = math.floor((left + right) / 2)
     local track = rpr.GetTrack(CURR_PROJ, index)
     local posy, height = getTrackPosAndHeight(track)
     if posy < 0 then
-      if posy + height > 0 then return track, index + 1 end
+      if posy + height > 0 then return track, index + 1 end -- Rules out invisible tracks, height == 0, at the top
       left = index + 1
     elseif posy > 0 then
       right = index - 1
@@ -302,9 +322,9 @@ local function getFirstTCPTrackBinary()
   end
   assert(nil, "getFirstTCPTrackBinary: Should never get here!")
   
-end -- getFirstTCÅTracksBinary
+end -- getFirstTCPTrackBinary
 ---------------------------------------------------------------------------
--- Does a binary search, halving and halving until it finds the rigth track
+-- Does a binary search, halving and halving until it finds the right track
 -- If no tracks, or only the Master track is visible, this returns nil, 0
 -- But in that case getFirstTCPTrack has already returned either the master or -1
 local function getLastTCPTrackBinary(tcpheight)
@@ -338,7 +358,7 @@ local function getLastTCPTrackBinary(tcpheight)
 
   return nil, 0
   
-end -- getLastTCPTrackLinear
+end -- getLastTCPTrackBinary
 --------------------------------------------
 -- Tracks can be invisible for two reasons:
 -- 1. outside the TCP bounding box
@@ -349,7 +369,7 @@ local function collectVisibleTracks()
   
   local _, findex = getFirstTCPTrackBinary()
   local _, lindex = getLastTCPTrackBinary(h)
-  Msg("First/last visible track: "..findex..", "..lindex)
+  --Msg("First/last visible track: "..findex..", "..lindex)
   
   local vistracks = {}
   if findex < 0 then return vistracks end -- No visible tracks
@@ -370,38 +390,82 @@ local function collectVisibleTracks()
   return vistracks
   
 end -- collectVisibleTracks
+-----------------------------
+local function drawHeader()
+  
+  --[ [
+  -- Clear (for now) everything above the FX list drawing area
+  gfx.set(MFXlist.COLOR_EMPTYSLOT[1]/255, MFXlist.COLOR_EMPTYSLOT[2]/255, MFXlist.COLOR_EMPTYSLOT[3]/255)
+  gfx.rect(0, 0, gfx.w, MFXlist.TOP_LINEY)
+  --gfx.set(MFXlist.COLOR_FAINT[1]/255, MFXlist.COLOR_FAINT[1]/255, MFXlist.COLOR_FAINT[1]/255)
+  gfx.set(1, 1, 1, 0.7)
+  gfx.x, gfx.y = 0, 0
+  gfx.setfont(MFXlist.FONT_HEADER)
+  gfx.drawstr("MFXlist v0.1", 5, gfx.w, MFXlist.TOP_LINEY)
+  --]]
+  --[[
+  -- Blit the bufhead
+  gfx.dest = -1
+  local headw, headh = gfx.getimgdim(MFXlist.BLITBUF_HEAD)
+  --local scalew = gfx.w / headw
+  local scaleh = drawy / headh -- always want to scale to height
+  --local scale = math.min(scalew, scaleh)
+  gfx.x, gfx.y = 0, 0
+  -- gfx.blit(MFXlist.BLITBUF_HEAD, scaleh, 0)
+  gfx.blit(MFXlist.BLITBUF_HEAD, 1, 0, 
+    (headw - gfx.w) / 2, (headh - MFXlist.TOP_LINEY) / 2, gfx.w, MFXlist.TOP_LINEY)
+  --]]
+  
+end -- drawHeader
 ------------------------------
-local function drawTracks()
+local function drawFooter(text)
   
-  gfx.r, gfx.g, gfx.b = 0, 0, 0
-  gfx.setfont(2, MFXlist.FONT_NAME1, MFXlist.FONT_SIZE)
+  -- Draw bottom line of FX list area (should not draw FX below this, it will be erased)
+  gfx.line(0, MFXlist.BOT_LINEY, gfx.w, MFXlist.BOT_LINEY)  
+  gfx.set(MFXlist.COLOR_EMPTYSLOT[1]/255, MFXlist.COLOR_EMPTYSLOT[2]/255, MFXlist.COLOR_EMPTYSLOT[3]/255)
+  gfx.rect(0, MFXlist.BOT_LINEY + 1, gfx.w, gfx.h - MFXlist.BOT_LINEY + 1)
   
-  local x, y, _, h = GetClientBounds(MFXlist.TCP_HWND)
-  local _, drawy = gfx.screentoclient(x, y)
-    
+  if text then 
+    -- write text in the footer
+  end
+
+end -- drawFooter
+------------------------------
+local function handleTracks()
+  
+  gfx.set(1, 1, 1)
+  gfx.setfont(MFXlist.FONT_FXNAME, MFXlist.FONT_NAME1, MFXlist.FONT_SIZE1)
+  
+  --local x, y, _, h = GetClientBounds(MFXlist.TCP_HWND)
+  -- local _, drawy = gfx.screentoclient(x, y) -- top y coord to draw at, do not draw above this!
+  local drawy = MFXlist.TOP_LINEY
+  
   local vistracks = collectVisibleTracks()
   local numtracks = #vistracks
   for i = 1, numtracks do 
     local trinfo = vistracks[i]
     local posy = trinfo.posy
     local height = trinfo.height
-    gfx.rect(0, drawy + posy, gfx.w, height, 0)
+    local numfxs = math.floor(height / MFXlist.SLOT_HEIGHT) -- max num FX to show
+    gfx.rect(0, drawy + posy, gfx.w, height, 0) -- rect around the slots for this track
     --drawy = drawy + height
     local fxlist = trinfo.fx
     gfx.x, gfx.y = 0, drawy + posy    
-    for i = 1, #fxlist do
+    --Msg("drawy + posy = "..drawy .. " + "..posy.." = "..gfx.y)
+    local count = math.min(#fxlist, numfxs)
+    --Msg(trinfo.name..": height = "..height..", numfxs = "..numfxs..", #fxlist = "..#fxlist..", count = "..count)
+    for i = 1, count do
       gfx.x = 0
-      --gfx.drawstr(trinfo.name, 1, gfx.w, gfx.y + MFXlist.FONT_SIZE) -- https://forum.cockos.com/showthread.php?t=226916
-      gfx.drawstr(fxlist[i].fxname, 1, gfx.w, gfx.y + MFXlist.FONT_SIZE)
-      gfx.y = gfx.y + MFXlist.FONT_SIZE
+      gfx.drawstr(fxlist[i].fxname, 1, gfx.w, gfx.y + MFXlist.SLOT_HEIGHT)
+      gfx.y = gfx.y + MFXlist.SLOT_HEIGHT
       --Msg(trinfo.name..": "..fxlist[i].fxname)
     end
   end
   
-  gfx.r, gfx.g, gfx.b = 1, 1, 1
-  gfx.line(0, drawy + h, gfx.w, drawy + h)
-  
-end -- drawTracks
+  drawHeader()
+  drawFooter()
+
+end -- handleTracks
 ------------------------------------------------
 local function openWindow()
   gfx.clear = MFXlist.COLOR_EMPTYSLOT[1] + MFXlist.COLOR_EMPTYSLOT[2] * 256 + MFXlist.COLOR_EMPTYSLOT[3] * 65536
@@ -434,13 +498,34 @@ local function handleMenu(m_cap, mx, my)
     local track, idx = getLastTCPTrackBinary(h)
     local endt = rpr.time_precise()
     Msg("Last visible track: "..idx.." ("..endt-startt..")")
-  elseif ret == MFXlist.MENU_SHOWTRACKS then
-    local tracks = collectTracks()
-    showTracks(tracks)
+  elseif ret == MFXlist.MENU_DRAWTRACKS then
+    handleTracks()
   end
   return ret
 end -- handleMenu
-
+----------------------------
+local function handleMouse()
+  
+  local m_cap = gfx.mouse_cap
+  local mbr_down = m_cap & MFXlist.MB_RIGHT
+  local mbl_down = m_cap & MFXlist.MB_LEFT
+  if mbr_down == MFXlist.MB_RIGHT and mbr_prev ~= MFXlist.MB_RIGHT then
+    local mx, my = gfx.mouse_x, gfx.mouse_y
+    mbr_prev = MFXlist.MB_RIGHT
+    local ret = handleMenu(m_cap, mx, my) -- onRightClick()
+    -- Msg("Showmenu returned: "..ret)
+    if ret == MFXlist.MENU_QUIT then
+      Msg("Quitting...")
+      gfx.quit()
+      return false
+    end
+  elseif mbr_down ~= MFXlist.MB_RIGHT and mbr_prev == MFXlist.MB_RIGHT then
+    mbr_prev = 0
+  end
+  
+  return true
+  
+end -- handleMouse
 -----------------------------
 local function exitScript()
   Msg("Bye, bye")
@@ -450,41 +535,48 @@ local function initializeScript()
   
   rpr.atexit(exitScript)
   openWindow()
+  
+  gfx.setfont(MFXlist.FONT_FXNAME, MFXlist.FONT_NAME1, MFXlist.FONT_SIZE11)
+  gfx.setfont(MFXlist.FONT_HEADER, MFXlist.FONT_NAME2, MFXlist.FONT_SIZE12)
+  
   local hwnd, x, y, w, h = getTCPProperties() -- screen coordinates
   assert(hwnd, "Could not get TCP HWND, cannot do much now")
-  
   MFXlist.TCP_HWND = hwnd
+  
   local cx, cy = gfx.screentoclient(x, y)
-  gfx.line(0, cy, gfx.w, cy)
-  gfx.line(0, cy + h, gfx.w, cy + h)
+  MFXlist.TOP_LINEY = cy
+  MFXlist.BOT_LINEY = MFXlist.TOP_LINEY + h
+    
+  gfx.line(0, cy, gfx.w, cy) -- line on level with TCP top (do not draw FX above this)
+  gfx.line(0, cy + h, gfx.w, cy + h) -- line on level with TCP bottom (do not draw FX below this)
   Msg("Dock: "..gfx.dock(-1)..", gfx.w: "..gfx.w..", gfx.h: "..gfx.h)
   Msg("TCP x: "..x..", y: "..y..", w: "..w..", h:"..h)
+  Msg("MFXlist drawing area: 0, "..cy..", "..gfx.w..", "..cy + h)
   
-  drawTracks()
+  -- Set up the header buffer for blitting -- cannot seem to get the blit at the end of drawTracks to work 
+  gfx.dest = MFXlist.BLITBUF_HEAD
+  gfx.setimgdim(MFXlist.BLITBUF_HEAD, MFXlist.BLITBUF_HEADW, MFXlist.BLITBUF_HEADH) -- gfx.w, cy)
+  gfx.clear = MFXlist.COLOR_EMPTYSLOT[1] + MFXlist.COLOR_EMPTYSLOT[2] *256 + MFXlist.COLOR_EMPTYSLOT[3] * 256 * 256 -- will this clear gfx.dest?
+  --gfx.set(MFXlist.COLOR_FAINT[1]/255, MFXlist.COLOR_FAINT[1]/255, MFXlist.COLOR_FAINT[1]/255)
+  gfx.set(1, 1, 1, 0.7)
+  gfx.x, gfx.y = 0, 0
+  gfx.setfont(16, MFXlist.FONT_NAME1, 16, 'b')
+  gfx.drawstr("MFXlist v0.1", 5, MFXlist.BLITBUF_HEADW, MFXlist.BLITBUF_HEADH) -- gfx.w, cy)
+  
+  gfx.dest = -1
+  handleTracks()
   
 end -- initializeScript
 ------------------------------------------------ Here is the main loop
 local function mfxlistMain()
   
-  -- mouse handling etc
-  local m_cap = gfx.mouse_cap
-  local mbr_down = m_cap & MFXlist.MB_RIGHT
-  if mbr_down == MFXlist.MB_RIGHT and mbr_prev ~= MFXlist.MB_RIGHT then
-    mx, my = gfx.mouse_x, gfx.mouse_y
-    mbr_prev = MFXlist.MB_RIGHT
-    local ret = handleMenu(m_cap, mx, my) 
-    -- Msg("Showmenu returned: "..ret)
-    if ret == MFXlist.MENU_QUIT then
-      Msg("Quitting...")
-      gfx.quit()
-      return
-    end
-  elseif mbr_down ~= MFXlist.MB_RIGHT and mbr_prev == MFXlist.MB_RIGHT then
-    mbr_prev = 0
-  end
+  local x, y, w, h = GetClientBounds(MFXlist.TCP_HWND)
+  _, MFXlist.TOP_LINEY = gfx.screentoclient(x, y) -- top y coord to draw FX at, above this only header stuff
+  MFXlist.BOT_LINEY = MFXlist.TOP_LINEY + h
   
-  --drawTracks()
-  
+  handleTracks()
+  if not handleMouse() then return end
+    
   -- Check if we are to quit or not
   local dstate = gfx.dock(-1)
   if gfx.getchar() < 0 then --or dstate == MFXlist.LEFT_ARRANGEDOCKER then
@@ -498,19 +590,14 @@ local function mfxlistMain()
 end -- mfxlistMain
 ------------------------------------------------ It all starts here, really
 Msg("MFX-list ******")
---Msg("Num tracks: "..rpr.CountTracks(CURR_PROJ))
 
--- setupForTesting(10)
+--[[
+local tracks = collectTracks()
+Msg(tprint(tracks))
+--]]
+
 initializeScript()
-
--- local tracks = collectTracks()
--- Msg(tprint(tracks))
--- showTracks(tracks)
-
--- local track, index = getFirstTCPTrackLinear()
--- Msg("First visible track: "..index)
-
-mfxlistMain()
+mfxlistMain() -- run main loop
 
 --[[ Stuff on dockers and HWNDs
 https://forum.cockos.com/showthread.php?p=1507649#post1507649
