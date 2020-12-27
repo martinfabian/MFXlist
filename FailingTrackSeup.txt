@@ -1,0 +1,107 @@
+MFX-list ****** This track setup fails getFirstTCPTrackBinary, the assertion fires!
+{
+  [1] =     {
+      name= "MASTER",
+      posy= -146.0,
+      track= "userdata: 0000000001F7FD40",
+      height= 146.0,
+      enabled= "true",
+      visible= "true",
+    },                                      The problem is the MASTER TCP gap (5 pixels)
+  [2] =     {                               When posy + height == 0 for the MASTER, then
+      name= "Track 1",                      the first visible track (if any) is not at 0
+      posy= 5.0,                            but at 5!         (Can it be at 4, 3, 2, 1?)
+      track= "userdata: 00000000A3DDE710",
+      height= 146.0,
+      enabled= "true",                      It seems that getLastTCPTrackBinary is not
+      visible= "true",                      affected by the MASTER TCP gap. Removing all
+    },                                      tracks except the first and the MASTER, and
+  [3] =     {                               keeping the MASTER at posy -146, height 146
+      name= "Track 2",                      the last TCP track returned is correctly #1
+      posy= 151.0,
+      track= "userdata: 00000000A3DF3E30",
+      height= 146.0,
+      enabled= "true",
+      visible= "true",
+    },
+  [4] =     {
+      name= "Track 3",
+      posy= 297.0,
+      track= "userdata: 00000000A3EF43E0",
+      height= 146.0,
+      enabled= "true",
+      visible= "true",
+    },
+  [5] =     {
+      name= "Track 4",
+      posy= 443.0,
+      track= "userdata: 00000000A3F85CE0",
+      height= 146.0,
+      enabled= "true",
+      visible= "true",
+    },
+  [6] =     {
+      name= "Track 5",
+      posy= 589.0,
+      track= "userdata: 00000000A4601910",
+      height= 146.0,
+      enabled= "true",
+      visible= "true",
+    },
+  [7] =     {
+      name= "Track 6",
+      posy= 735.0,
+      track= "userdata: 00000000A463CE50",
+      height= 146.0,
+      enabled= "true",
+      visible= "true",
+    },
+  [8] =     {
+      name= "Track 7",
+      posy= 881.0,
+      track= "userdata: 00000000A4118E80",
+      height= 146.0,
+      enabled= "true",
+      visible= "true",
+    },
+  [9] =     {
+      name= "Track 8",
+      posy= 1027.0,
+      track= "userdata: 00000000A4616CE0",
+      height= 146.0,
+      enabled= "true",
+      visible= "true",
+    },
+  [10] =     {
+      name= "Track 9",
+      posy= 1173.0,
+      track= "userdata: 00000000A4662220",
+      height= 146.0,
+      enabled= "true",
+      visible= "true",
+    },
+  [11] =     {
+      name= "Track 10",
+      posy= 1319.0,
+      track= "userdata: 000000009E52A200",
+      height= 146.0,
+      enabled= "true",
+      visible= "true",
+    },
+  [12] =     {
+      name= "Track 11",
+      posy= 1465.0,
+      track= "userdata: 00000000A40F8F20",
+      height= 146.0,
+      enabled= "true",
+      visible= "true",
+    },
+  [13] =     {
+      name= "Track 12",
+      posy= 1611.0,
+      track= "userdata: 000000009E250150",
+      height= 146.0,
+      enabled= "true",
+      visible= "true",
+    },
+}
