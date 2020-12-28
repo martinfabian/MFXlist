@@ -19,11 +19,13 @@ local function Msg(str)
    if DO_DEBUG then rpr.ShowConsoleMsg(tostring(str).."\n") end
 end
 -------------------------------------------
--- Globals
+-- Globals, variables with underscore are global
+-- All capitals are constants, do not assign to these in the code
+-- Non-constants are used to communicate between different parts of the code
 local MFXlist = 
-{ -- All capitals are constants, do not assign to these in the code
-  SCRIPT_NAME = "MFX-list for Reaper",
+{ 
   VERSION = "0.0.1",
+  SCRIPT_NAME = "MFX-list v0.0.1",
   
   MB_LEFT = 1,
   MB_RIGHT = 2,
@@ -34,25 +36,42 @@ local MFXlist =
   MOD_WIN = 32, 
   MOD_KEYS = 4+8+16+32, 
   
+  mouse_y = nil, -- is set to mouse_y when mouse inside MFXlist, else nil
+  fx_hovered = nil, -- is set to the FX under the mouse cursor, nil if mouse is outside of client area, 0 if above empty slot
+  
   MENU_STR = "Draw tracks|Show first track|Show last track|Quit",
   MENU_DRAWTRACKS = 1,
   MENU_SHOWFIRSTTCP = 2,
   MENU_SHOWLASTTCP = 3,
   MENU_QUIT = 4,
 
-  COLOR_BLACK   = {012, 012, 012},
+  COLOR_BLACK   = {012/255, 012/255, 012/255},
   COLOR_VST     = {},
   COLOR_JSFX    = {},
   COLOR_HIGHLIGHT = {},
-  COLOR_EMPTYSLOT = {40, 40, 40},
-  COLOR_FAINT = {60, 60, 60},
+  COLOR_EMPTYSLOT = {40/255, 40/255, 40/255},
+  COLOR_FAINT = {60/255, 60/255, 60/255},
+  COLOR_FXHOVERED = {1, 1, 0}, 
+  
+  FX_DISABLEDA = 0.3, -- fade of name for disabled FX
+  FX_OFFLINEDA = 0.1, -- even fainter for offlined FX
+  
+  FXCHAIN_HIDE = 0, -- flags for TrackFX_Show(track, fxindx, flags)
+  FXCHAIN_SHOW = 1,
+  FXFLOAT_HIDE = 2,
+  FXFLOAT_SHOW = 3,
+  
+  TRACK_FXENABLED = 4, -- flags for GetTrackState(track)
+  TRACK_MUTED = 8,
   
   FONT_NAME1 = "Arial",
   FONT_NAME2 = "Courier New",
   FONT_SIZE1 = 14,
   FONT_SIZE2 = 16,
   FONT_FXNAME = 1,
-  FONT_HEADER = 2,
+  FONT_FXBOLD = 2,
+  FONT_HEADER = 16,
+  FONT_BOLDFLAG = 0x42000000,
   
   SLOT_HEIGHT = 13, -- pixels high
   
@@ -65,12 +84,14 @@ local MFXlist =
   LEFT_ARRANGEDOCKER = 512+1, -- 512 = left of arrange view, +1 == docked (probably not universally true)
   
   TCP_HWND = nil, -- filled in when script initializes (so strictly speaking not constant, but yeah...)
-  TOP_LINEY = nil, -- Set on every defer before calling any other function (meaningful to have it stored?)
-  BOT_LINEY = nil, -- Set on every defer before calling any other function (meaningful to have it stored=
+  TCP_top = nil, -- Set on every defer before calling any other function
+  TCP_bot = nil, -- Set on every defer before calling any other function
   
   BLITBUF_HEAD = 16, -- off-screen draw buffer for the header
   BLITBUF_HEADW = 300,
   BLITBUF_HEADH = 300,
+  
+  footer_text = "MFX-list",
 }
 
 local CURR_PROJ = 0
@@ -126,6 +147,7 @@ local function setupForTesting(num)
   
 end -- setUpFortesting
 ------------------------------------------ Stolen from https://stackoverflow.com/questions/41942289/display-contents-of-tables-in-lua
+-- Recursive print of a table, returns a string
 local function tprint (tbl, indent)
   if not indent then indent = 0 end
   local toprint = string.rep(" ", indent) .. "{\r\n"
@@ -200,7 +222,8 @@ local function collectFX(track)
     fxname = fxname:gsub(MFXlist.MATCH_UPTOCOLON.."%s", "") -- up to colon and then space, replace by nothing
     fxname = fxname:gsub("%([^()]*%)","")
     local enabled =  rpr.TrackFX_GetEnabled(track, i-1)
-    table.insert(fxtab, {fxname = fxname, fxtype = fxtype, enabled = enabled}) -- confusing <key, value> pairs here, but it works
+    local offlined = rpr.TrackFX_GetOffline(track, i-1)
+    table.insert(fxtab, {fxname = fxname, fxtype = fxtype, enabled = enabled, offlined = offlined}) -- confusing <key, value> pairs here, but it works
   end
   return fxtab
 end
@@ -394,71 +417,85 @@ end -- collectVisibleTracks
 local function drawHeader()
   
   --[ [
-  -- Clear (for now) everything above the FX list drawing area
-  gfx.set(MFXlist.COLOR_EMPTYSLOT[1]/255, MFXlist.COLOR_EMPTYSLOT[2]/255, MFXlist.COLOR_EMPTYSLOT[3]/255)
-  gfx.rect(0, 0, gfx.w, MFXlist.TOP_LINEY)
-  --gfx.set(MFXlist.COLOR_FAINT[1]/255, MFXlist.COLOR_FAINT[1]/255, MFXlist.COLOR_FAINT[1]/255)
+  -- Draw over everything above the FX list drawing area
+  gfx.set(MFXlist.COLOR_EMPTYSLOT[1], MFXlist.COLOR_EMPTYSLOT[2], MFXlist.COLOR_EMPTYSLOT[3])
+  gfx.rect(0, 0, gfx.w, MFXlist.TCP_top)
+  --gfx.set(MFXlist.COLOR_FAINT[1], MFXlist.COLOR_FAINT[1], MFXlist.COLOR_FAINT[1])
   gfx.set(1, 1, 1, 0.7)
   gfx.x, gfx.y = 0, 0
   gfx.setfont(MFXlist.FONT_HEADER)
-  gfx.drawstr("MFXlist v0.1", 5, gfx.w, MFXlist.TOP_LINEY)
+  gfx.drawstr(MFXlist.SCRIPT_NAME, 5, gfx.w, MFXlist.TCP_top)
   --]]
-  --[[
+  --[[ -- Cannot get this to work correctly, don't know why, giving up for now
   -- Blit the bufhead
   gfx.dest = -1
   local headw, headh = gfx.getimgdim(MFXlist.BLITBUF_HEAD)
-  --local scalew = gfx.w / headw
-  local scaleh = drawy / headh -- always want to scale to height
-  --local scale = math.min(scalew, scaleh)
-  gfx.x, gfx.y = 0, 0
-  -- gfx.blit(MFXlist.BLITBUF_HEAD, scaleh, 0)
-  gfx.blit(MFXlist.BLITBUF_HEAD, 1, 0, 
-    (headw - gfx.w) / 2, (headh - MFXlist.TOP_LINEY) / 2, gfx.w, MFXlist.TOP_LINEY)
+  local headx, heady = (headw - gfx.w) / 2, (headh - MFXlist.TCP_top) / 2
+  gfx.blit(MFXlist.BLITBUF_HEAD, 1, 0, headx, heady, gfx.w, MFXlist.TCP_top, 0, 0, gfx.w, MFXlist.TCP_top)
   --]]
   
 end -- drawHeader
 ------------------------------
-local function drawFooter(text)
+local function drawFooter()
   
   -- Draw bottom line of FX list area (should not draw FX below this, it will be erased)
-  gfx.line(0, MFXlist.BOT_LINEY, gfx.w, MFXlist.BOT_LINEY)  
-  gfx.set(MFXlist.COLOR_EMPTYSLOT[1]/255, MFXlist.COLOR_EMPTYSLOT[2]/255, MFXlist.COLOR_EMPTYSLOT[3]/255)
-  gfx.rect(0, MFXlist.BOT_LINEY + 1, gfx.w, gfx.h - MFXlist.BOT_LINEY + 1)
+  gfx.line(0, MFXlist.TCP_bot, gfx.w, MFXlist.TCP_bot)  
+  gfx.set(MFXlist.COLOR_EMPTYSLOT[1], MFXlist.COLOR_EMPTYSLOT[2], MFXlist.COLOR_EMPTYSLOT[3])
+  gfx.rect(0, MFXlist.TCP_bot + 1, gfx.w, gfx.h - MFXlist.TCP_bot - 1)
   
-  if text then 
-    -- write text in the footer
+  local text = MFXlist.footer_text
+  if text and text ~= "" then 
+    --Msg("text: "..text)
+    gfx.set(1, 1, 1, 0.7)
+    gfx.setfont(MFXlist.FONT_FXNAME, MFXlist.FONT_NAME1, MFXlist.FONT_SIZE1)
+    gfx.x, gfx.y = 0, MFXlist.TCP_bot   
+    gfx.drawstr(text, 5, gfx.w, gfx.h) -- Note, the last two parameters are the right/bottom COORDS of the box to draw within, not width/height
   end
 
 end -- drawFooter
 ------------------------------
 local function handleTracks()
   
-  gfx.set(1, 1, 1)
-  gfx.setfont(MFXlist.FONT_FXNAME, MFXlist.FONT_NAME1, MFXlist.FONT_SIZE1)
+  -- gfx.set(1, 1, 1)
+  gfx.setfont(MFXlist.FONT_FXNAME)--, MFXlist.FONT_NAME1, MFXlist.FONT_SIZE1)
   
-  --local x, y, _, h = GetClientBounds(MFXlist.TCP_HWND)
-  -- local _, drawy = gfx.screentoclient(x, y) -- top y coord to draw at, do not draw above this!
-  local drawy = MFXlist.TOP_LINEY
+  local drawy = MFXlist.TCP_top
   
   local vistracks = collectVisibleTracks()
   local numtracks = #vistracks
   for i = 1, numtracks do 
+    gfx.set(1, 1, 1, gfx.a)
+    local insidetrack = false -- used to send message from track to FX on track
     local trinfo = vistracks[i]
     local posy = trinfo.posy
     local height = trinfo.height
-    local numfxs = math.floor(height / MFXlist.SLOT_HEIGHT) -- max num FX to show
+    local enabled = trinfo.enabled
+    if MFXlist.mouse_y and posy <= MFXlist.mouse_y-drawy and MFXlist.mouse_y-drawy <= posy + height then
+      MFXlist.footer_text = trinfo.name
+      insidetrack = true
+    end
+    -- Draw bounding box for track FX
+    gfx.a = MFXlist.FX_OFFLINEDA -- always faint
     gfx.rect(0, drawy + posy, gfx.w, height, 0) -- rect around the slots for this track
-    --drawy = drawy + height
+    -- Calc the number of FX slots to draw, and draw them
     local fxlist = trinfo.fx
-    gfx.x, gfx.y = 0, drawy + posy    
-    --Msg("drawy + posy = "..drawy .. " + "..posy.." = "..gfx.y)
+    local numfxs = math.floor(height / MFXlist.SLOT_HEIGHT) -- max num FX to show
     local count = math.min(#fxlist, numfxs)
-    --Msg(trinfo.name..": height = "..height..", numfxs = "..numfxs..", #fxlist = "..#fxlist..", count = "..count)
+    gfx.x, gfx.y = 0, drawy + posy  -- drawing FX names start at this position
     for i = 1, count do
+      gfx.a = fxlist[i].enabled and 1 or MFXlist.FX_DISABLEDA -- disabled FX are shown faint
+      -- if mouse hovers over this FX, draw it in different color
+      if insidetrack and gfx.y <= MFXlist.mouse_y and MFXlist.mouse_y < gfx.y + MFXlist.SLOT_HEIGHT then
+        gfx.set(MFXlist.COLOR_FXHOVERED[1], MFXlist.COLOR_FXHOVERED[2], MFXlist.COLOR_FXHOVERED[3], gfx.a)
+        gfx.setfont(MFXlist.FONT_FXBOLD)
+        MFXlist.hovered_fx = {trinfo.track, i} -- store track and fx index for mouse click
+      else
+        gfx.setfont(MFXlist.FONT_FXNAME)
+        gfx.set(1, 1, 1, gfx.a)
+      end
       gfx.x = 0
       gfx.drawstr(fxlist[i].fxname, 1, gfx.w, gfx.y + MFXlist.SLOT_HEIGHT)
       gfx.y = gfx.y + MFXlist.SLOT_HEIGHT
-      --Msg(trinfo.name..": "..fxlist[i].fxname)
     end
   end
   
@@ -466,11 +503,7 @@ local function handleTracks()
   drawFooter()
 
 end -- handleTracks
-------------------------------------------------
-local function openWindow()
-  gfx.clear = MFXlist.COLOR_EMPTYSLOT[1] + MFXlist.COLOR_EMPTYSLOT[2] * 256 + MFXlist.COLOR_EMPTYSLOT[3] * 65536
-  gfx.init(MFXlist.SCRIPT_NAME, MFXlist.WIN_W, MFXlist.WIN_H, MFXlist.LEFT_ARRANGEDOCKER, MFXlist.WIN_X, MFXlist.WIN_Y)
-end
+
 ---------------------------------------
 local function handleMenu(m_cap, mx, my)
 
@@ -506,11 +539,28 @@ end -- handleMenu
 ----------------------------
 local function handleMouse()
   
+  local mx, my = gfx.mouse_x, gfx.mouse_y
+  if mx < 0 or gfx.w < mx or my < 0 or gfx.h < my then -- outside of client area
+    MFXlist.mouse_y = nil
+    MFXlist.footer_text = MFXlist.SCRIPT_NAME
+    return true -- if we are not inside the client rect, we can just as well return (but not quit)
+  end    
+  
+  if 0 <= mx and mx <= gfx.w and MFXlist.TCP_top <= my and my <= MFXlist.TCP_bot then -- inside track draw area
+    -- this only works when docked (but then... lots of stuff here only works when docked)
+    MFXlist.mouse_y = my
+    MFXlist.hovered_fx = {0, 0} -- zerozero means not over any FX
+  else -- either in header or in footer
+    MFXlist.hovered_fx = nil
+    MFXlist.mouse_y = nil
+    MFXlist.footer_text = MFXlist.SCRIPT_NAME
+  end
+  
   local m_cap = gfx.mouse_cap
   local mbr_down = m_cap & MFXlist.MB_RIGHT
   local mbl_down = m_cap & MFXlist.MB_LEFT
   if mbr_down == MFXlist.MB_RIGHT and mbr_prev ~= MFXlist.MB_RIGHT then
-    local mx, my = gfx.mouse_x, gfx.mouse_y
+    --local mx, my = gfx.mouse_x, gfx.mouse_y
     mbr_prev = MFXlist.MB_RIGHT
     local ret = handleMenu(m_cap, mx, my) -- onRightClick()
     -- Msg("Showmenu returned: "..ret)
@@ -529,39 +579,46 @@ end -- handleMouse
 -----------------------------
 local function exitScript()
   Msg("Bye, bye")
-end -- exitScrip
+end -- exitScript
+------------------------------------------------
+local function openWindow()
+  gfx.clear = MFXlist.COLOR_EMPTYSLOT[1] * 255 + MFXlist.COLOR_EMPTYSLOT[2] * 255 * 256 + MFXlist.COLOR_EMPTYSLOT[3] * 255 * 65536
+  gfx.init(MFXlist.SCRIPT_NAME, MFXlist.WIN_W, MFXlist.WIN_H, MFXlist.LEFT_ARRANGEDOCKER, MFXlist.WIN_X, MFXlist.WIN_Y)
+end -- openWindow
 ------------------------------------------------ 
 local function initializeScript()
   
   rpr.atexit(exitScript)
   openWindow()
   
-  gfx.setfont(MFXlist.FONT_FXNAME, MFXlist.FONT_NAME1, MFXlist.FONT_SIZE11)
-  gfx.setfont(MFXlist.FONT_HEADER, MFXlist.FONT_NAME2, MFXlist.FONT_SIZE12)
+  gfx.setfont(MFXlist.FONT_FXNAME, MFXlist.FONT_NAME1, MFXlist.FONT_SIZE1)
+  gfx.setfont(MFXlist.FONT_FXBOLD, MFXlist.FONT_NAME1, MFXlist.FONT_SIZE1, MFXlist.FONT_BOLDFLAG)
+  gfx.setfont(MFXlist.FONT_HEADER, MFXlist.FONT_NAME2, MFXlist.FONT_SIZE2)
   
   local hwnd, x, y, w, h = getTCPProperties() -- screen coordinates
-  assert(hwnd, "Could not get TCP HWND, cannot do much now")
+  assert(hwnd, "Could not get TCP HWND, cannot do much now, sorry")
   MFXlist.TCP_HWND = hwnd
   
   local cx, cy = gfx.screentoclient(x, y)
-  MFXlist.TOP_LINEY = cy
-  MFXlist.BOT_LINEY = MFXlist.TOP_LINEY + h
+  MFXlist.TCP_top = cy
+  MFXlist.TCP_bot = MFXlist.TCP_top + h
     
   gfx.line(0, cy, gfx.w, cy) -- line on level with TCP top (do not draw FX above this)
   gfx.line(0, cy + h, gfx.w, cy + h) -- line on level with TCP bottom (do not draw FX below this)
   Msg("Dock: "..gfx.dock(-1)..", gfx.w: "..gfx.w..", gfx.h: "..gfx.h)
-  Msg("TCP x: "..x..", y: "..y..", w: "..w..", h:"..h)
-  Msg("MFXlist drawing area: 0, "..cy..", "..gfx.w..", "..cy + h)
+  Msg("TCP area (screen coords): "..x..", "..y..", "..w..", "..h)
+  Msg("MFXlist header: 0, 0, "..gfx.w..", "..MFXlist.TCP_top) 
+  Msg("MFXlist drawing area: 0, "..MFXlist.TCP_top..", "..gfx.w..", "..MFXlist.TCP_bot - MFXlist.TCP_top)
+  Msg("MFXlist footer: 0, "..MFXlist.TCP_bot..", "..gfx.w..", "..gfx.h - MFXlist.TCP_bot)
   
-  -- Set up the header buffer for blitting -- cannot seem to get the blit at the end of drawTracks to work 
+  -- Set up the header buffer for blitting -- cannot seem to get the blit of the header to work 
   gfx.dest = MFXlist.BLITBUF_HEAD
   gfx.setimgdim(MFXlist.BLITBUF_HEAD, MFXlist.BLITBUF_HEADW, MFXlist.BLITBUF_HEADH) -- gfx.w, cy)
-  gfx.clear = MFXlist.COLOR_EMPTYSLOT[1] + MFXlist.COLOR_EMPTYSLOT[2] *256 + MFXlist.COLOR_EMPTYSLOT[3] * 256 * 256 -- will this clear gfx.dest?
-  --gfx.set(MFXlist.COLOR_FAINT[1]/255, MFXlist.COLOR_FAINT[1]/255, MFXlist.COLOR_FAINT[1]/255)
+  gfx.clear = MFXlist.COLOR_EMPTYSLOT[1] * 255 + MFXlist.COLOR_EMPTYSLOT[2] * 255 * 256 + MFXlist.COLOR_EMPTYSLOT[3] * 255 * 256 * 256 -- will this clear gfx.dest?
   gfx.set(1, 1, 1, 0.7)
   gfx.x, gfx.y = 0, 0
-  gfx.setfont(16, MFXlist.FONT_NAME1, 16, 'b')
-  gfx.drawstr("MFXlist v0.1", 5, MFXlist.BLITBUF_HEADW, MFXlist.BLITBUF_HEADH) -- gfx.w, cy)
+  gfx.setfont(MFXlist.FONT_HEADER, MFXlist.FONT_NAME1, MFXlist.FONT_HEADSIZE, MFXlist.FONT_BOLDFLAG)
+  gfx.drawstr(MFXlist.SCRIPT_NAME, 5, MFXlist.BLITBUF_HEADW, MFXlist.BLITBUF_HEADH) 
   
   gfx.dest = -1
   handleTracks()
@@ -571,8 +628,8 @@ end -- initializeScript
 local function mfxlistMain()
   
   local x, y, w, h = GetClientBounds(MFXlist.TCP_HWND)
-  _, MFXlist.TOP_LINEY = gfx.screentoclient(x, y) -- top y coord to draw FX at, above this only header stuff
-  MFXlist.BOT_LINEY = MFXlist.TOP_LINEY + h
+  _, MFXlist.TCP_top = gfx.screentoclient(x, y) -- top y coord to draw FX at, above this only header stuff
+  MFXlist.TCP_bot = MFXlist.TCP_top + h
   
   handleTracks()
   if not handleMouse() then return end
