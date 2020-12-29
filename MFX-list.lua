@@ -71,7 +71,13 @@ local MFXlist =
   FONT_FXNAME = 1,
   FONT_FXBOLD = 2,
   FONT_HEADER = 16,
-  FONT_BOLDFLAG = 0x42000000,
+  FONT_BOLDFLAG = 0x42000000,   -- bold
+  FONT_ITFLAG = 0x49000000,     -- italics
+  FONT_OUTFLAG = 0x4F000000,    -- outline
+  FONT_BLURFLAG = 0x52000000,   -- blurred
+  FONT_SHARPFLAG = 0x53000000,  -- sharpen
+  FONT_UNDERFLAG = 0x55000000,  -- underline
+  FONT_INVFLAG = 0x56000000,    -- invert  
   
   SLOT_HEIGHT = 13, -- pixels high
   
@@ -536,17 +542,53 @@ local function handleMenu(m_cap, mx, my)
   end
   return ret
 end -- handleMenu
+--------------------------------------------
+-- Swap bits 2 and 3 (0-based from the left)
+local function swapCtrlShft(bits)	
+  
+  local mask = MFXlist.MOD_CTRL | MFXlist.MOD_SHIFT -- 0xC -- 1100
+  local shftctrl = ((bits & MFXlist.MOD_CTRL) << 1) | ((bits & MFXlist.MOD_SHIFT) >> 1)
+
+  return (bits & ~mask) | shftctrl
+
+end -- swapCtrlShft
+---------------------------------------------------------------
+-- Mouse wheel over MFXlist, send the TCP a mousewheel message
+-- Need to "interpret" modifier keys to windows standard
+-- Reaper:  MLB, MRB, CTRL, SHFT, ALT, WIN, MID mouse button
+-- Windows: MLB, MRB, SHFT, CTRL,    ,    , MID mouse button
+-- bit indx  0    1     2    3    4    5     6
+local function handleMousewheel(wheel, mx, my)
+  
+  local screenx, screeny = gfx.clienttoscreen(mx, my) --  are these necessary?
+  -- Need to move the x into the TCP window...
+  --screenx = screenx + gfx.w -- will not work if the TCP narrower than gfx.w and mouse is close to border
+  
+  local mbkeys = swapCtrlShft(gfx.mouse_cap)
+  --Msg("mouse_cap: "..gfx.mouse_cap..", mbkeys: "..mbkeys)
+  
+  local retval = rpr.JS_WindowMessage_Send(MFXlist.TCP_HWND, 
+    "WM_MOUSEWHEEL", 
+    mbkeys, -- wParam, mouse buttons amd modifier keys
+    wheel, -- wParamHighWWord, wheel distance
+    screenx, screeny) -- lParam, lParamHighWord, need to fake it is over TCP?
+  
+  gfx.mouse_wheel = 0
+  
+end -- handleMousewheel
 ----------------------------
 local function handleMouse()
   
   local mx, my = gfx.mouse_x, gfx.mouse_y
+  
   if mx < 0 or gfx.w < mx or my < 0 or gfx.h < my then -- outside of client area
     MFXlist.mouse_y = nil
     MFXlist.footer_text = MFXlist.SCRIPT_NAME
     return true -- if we are not inside the client rect, we can just as well return (but not quit)
   end    
   
-  if 0 <= mx and mx <= gfx.w and MFXlist.TCP_top <= my and my <= MFXlist.TCP_bot then -- inside track draw area
+  -- Are we inside the track draw area?
+  if 0 <= mx and mx <= gfx.w and MFXlist.TCP_top <= my and my <= MFXlist.TCP_bot then 
     -- this only works when docked (but then... lots of stuff here only works when docked)
     MFXlist.mouse_y = my
     MFXlist.hovered_fx = {0, 0} -- zerozero means not over any FX
@@ -556,21 +598,24 @@ local function handleMouse()
     MFXlist.footer_text = MFXlist.SCRIPT_NAME
   end
   
-  local m_cap = gfx.mouse_cap
-  local mbr_down = m_cap & MFXlist.MB_RIGHT
-  local mbl_down = m_cap & MFXlist.MB_LEFT
-  if mbr_down == MFXlist.MB_RIGHT and mbr_prev ~= MFXlist.MB_RIGHT then
+  local wheel = gfx.mouse_wheel
+  if wheel ~= 0 then handleMousewheel(wheel, mx, my) end
+
+  local mcap = gfx.mouse_cap
+  local mbldown = mcap & MFXlist.MB_LEFT
+  local mbrdown = mcap & MFXlist.MB_RIGHT
+  if mbrdown == MFXlist.MB_RIGHT and mbrprev ~= MFXlist.MB_RIGHT then
     --local mx, my = gfx.mouse_x, gfx.mouse_y
-    mbr_prev = MFXlist.MB_RIGHT
-    local ret = handleMenu(m_cap, mx, my) -- onRightClick()
+    mbrprev = MFXlist.MB_RIGHT
+    local ret = handleMenu(mcap, mx, my) -- onRightClick()
     -- Msg("Showmenu returned: "..ret)
     if ret == MFXlist.MENU_QUIT then
       Msg("Quitting...")
       gfx.quit()
-      return false
+      return false -- tell the defer loop to quit
     end
-  elseif mbr_down ~= MFXlist.MB_RIGHT and mbr_prev == MFXlist.MB_RIGHT then
-    mbr_prev = 0
+  elseif mbrdown ~= MFXlist.MB_RIGHT and mbrprev == MFXlist.MB_RIGHT then
+    mbrprev = 0
   end
   
   return true
