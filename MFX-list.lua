@@ -1,5 +1,5 @@
 -- @description FX list for Reaper left docker (MFX-list)
--- @author M Fabian, inlcude code by Edgemeal
+-- @author M Fabian, inlcudes code by Edgemeal
 -- @version 0.0.1
 -- @changelog
 --   Nothing yet, or rather... everything
@@ -9,6 +9,11 @@
 -- @donation something.good.for.humankind 
 -- @about
 --   # Native ReaScript reimplementation of Doppelganger's FXlist
+--   # Needs the js_ReaScriptAPI (tested with reaper_js_ReaScriptAPI64.dll) by 
+--   #         Julian Sander, https://forum.cockos.com/showthread.php?t=212174
+
+-- TODO! Fix the scrolling, only ShiftCtrl+Mousewheel, View: Adjust selected track heights (MIDI CC relative/mousewheel), 972 works as it shoudl!
+-- TODO! Find left docker to attach to
 
 local string, table, math, os, utf8 = string, table, math, os, utf8
 local load, xpcall, pairs, ipairs = load, xpcall, pairs, ipairs, select
@@ -37,10 +42,11 @@ local MFXlist =
   MOD_KEYS = 4+8+16+32, 
   
   mouse_y = nil, -- is set to mouse_y when mouse inside MFXlist, else nil
-  fx_hovered = nil, -- is set to the FX under the mouse cursor, nil if mouse is outside of client area, 0 if above empty slot
+  track_hovered = nil, -- is set to the track (ptr) currently under mouse cursor, nil if mouse outside of client are
+  fx_hovered = nil, -- is set to the index (1-based!) of FX under the mouse cursor, nil if mouse is outside of current track FX 
   
-  MENU_STR = "Draw tracks|Show first track|Show last track|Quit",
-  MENU_DRAWTRACKS = 1,
+  MENU_STR = "Find left dock|Show first track|Show last track|Quit",
+  MENU_FINDLEFTDOCK = 1,
   MENU_SHOWFIRSTTCP = 2,
   MENU_SHOWLASTTCP = 3,
   MENU_QUIT = 4,
@@ -87,11 +93,16 @@ local MFXlist =
   WIN_Y = 200,
   WIN_W = 200,
   WIN_H = 200,
-  LEFT_ARRANGEDOCKER = 512+1, -- 512 = left of arrange view, +1 == docked (probably not universally true)
+  LEFT_ARRANGEDOCKER = 512+1, -- 512 = left of arrange view, +1 == docked (not universally true)
+  
+  -- CLASS_TRACKLISTWIN = "REAPERTrackListWindow", -- this is the arrange view where the media items live
+  CLASS_TCPDISPLAY = "REAPERTCPDisplay", -- this is the TCP where the track panes live
   
   TCP_HWND = nil, -- filled in when script initializes (so strictly speaking not constant, but yeah...)
   TCP_top = nil, -- Set on every defer before calling any other function
   TCP_bot = nil, -- Set on every defer before calling any other function
+  
+  CMD_SCROLLVERT = 989, -- View: Scroll vertically (MIDI CC relative/mousewheel)
   
   BLITBUF_HEAD = 16, -- off-screen draw buffer for the header
   BLITBUF_HEADW = 300,
@@ -182,31 +193,49 @@ end
 -- Requires js_ReaScriptAPI extension, 
 -- https://forum.cockos.com/showthread.php?t=212174
 local function GetClientBounds(hwnd)
+  
   local ret, left, top, right, bottom = rpr.JS_Window_GetClientRect(hwnd)
   return left, top, right-left, bottom-top
-end
-------------------------------------------------------
-local function FindChildByClass(hwnd, classname, occurance) 
+  
+end --GetClientBounds
+-----------------------------------------
+local function getAllChildWindows(hwnd)
+  
   local arr = rpr.new_array({}, 255)
   rpr.JS_Window_ArrayAllChild(hwnd, arr)
-  local adr = arr.table() 
-  local control_occurance = 0
+  return arr.table() 
+
+end -- getAllChildWIndows
+------------------------------------------
+local function getTitleMatchWindows(title, exact)
+  
+  local reaperarray = rpr.new_array({}, 255)
+  rpr.JS_Window_ArrayFind(title, exact, reaperarray)
+  return reaperarray.table()
+  
+end -- getTitleMatchWindows
+-----------------------------------------------------------------
+-- Find the occurrance-th instance of a window named by classname 
+local function FindChildByClass(hwnd, classname, occurrence) 
+
+  local adr = getAllChildWindows(hwnd)
   local count = #adr
   for j = 1, count do
     local hwnd = rpr.JS_Window_HandleFromAddress(adr[j]) 
     if rpr.JS_Window_GetClassName(hwnd) == classname then
-      control_occurance = control_occurance + 1
-      if occurance == control_occurance then
+      occurrence = occurrence - 1
+      if occurrence == 0 then
         return hwnd
       end
     end
   end
-end
+  
+end --FindChildByClass
 ---------------------------------------------------------
 -- Returns the HWND and the screen coordinates of the TCP
-local function getTCPProperties()
+local function getTCPProperties(classname)
 -- get first reaper child window with classname "REAPERTCPDisplay".
-  local tcp_hwnd = FindChildByClass(rpr.GetMainHwnd(), 'REAPERTCPDisplay', 1)
+  local tcp_hwnd = FindChildByClass(rpr.GetMainHwnd(), classname, 1) 
   if tcp_hwnd then
     local x,y,w,h = GetClientBounds(tcp_hwnd)
     --msg(w) -- show width
@@ -215,6 +244,31 @@ local function getTCPProperties()
   return nil, -1, -1, -1, -1
 end
 --------------------------------------------------------
+local function findLeftDock()
+  
+  local mhwnd = rpr.GetMainHwnd()
+  local _, mleft, mtop, mright, mbottom = rpr.JS_Window_GetClientRect(mhwnd)
+  Msg("MainHwnd, left: "..mleft..", top: "..mtop..", right: "..mright..", bottom: "..mbottom)
+  
+  local adr = getTitleMatchWindows("REAPER_dock", true)
+  local count = #adr
+  local docknumber = 0 -- guessing that the dockers come in order
+  for i = 1, count do
+    local hwnd = rpr.JS_Window_HandleFromAddress(adr[i]) 
+    --local classname = rpr.JS_Window_GetClassName(hwnd)
+    --Msg("i: "..i..", adr: "..adr[i]..", class: "..classname)
+    --if classname == "REAPER_dock" then
+      local _, left, top, right, bottom = rpr.JS_Window_GetRect(hwnd) 
+      Msg("REAPER_dock #"..docknumber..", left: "..left..", top: "..top..", right: "..right..", bottom: "..bottom)
+      if left == mleft then -- this should be the left docker
+        -- then what? how to get its number? do they come in order?
+        --MFXlist.LEFT_ARRANGEDOCKER = 2^docknumber + 1
+      end
+      docknumber = docknumber + 1
+    --end
+  end
+  
+end -- findLeftDock
 --------------------------------------------------------
 local function collectFX(track)
   assert(track, "collectFX: invalid parameter - track")
@@ -465,6 +519,9 @@ local function handleTracks()
   -- gfx.set(1, 1, 1)
   gfx.setfont(MFXlist.FONT_FXNAME)--, MFXlist.FONT_NAME1, MFXlist.FONT_SIZE1)
   
+  MFXlist.fx_hovered = nil
+  MFXlist.track_hovered = nil
+  
   local drawy = MFXlist.TCP_top
   
   local vistracks = collectVisibleTracks()
@@ -478,7 +535,8 @@ local function handleTracks()
     local enabled = trinfo.enabled
     if MFXlist.mouse_y and posy <= MFXlist.mouse_y-drawy and MFXlist.mouse_y-drawy <= posy + height then
       MFXlist.footer_text = trinfo.name
-      insidetrack = true
+      insidetrack = true -- send message to FX part of code, see below
+      MFXlist.track_hovered = trinfo.track
     end
     -- Draw bounding box for track FX
     gfx.a = MFXlist.FX_OFFLINEDA -- always faint
@@ -489,18 +547,25 @@ local function handleTracks()
     local count = math.min(#fxlist, numfxs)
     gfx.x, gfx.y = 0, drawy + posy  -- drawing FX names start at this position
     for i = 1, count do
-      gfx.a = fxlist[i].enabled and 1 or MFXlist.FX_DISABLEDA -- disabled FX are shown faint
+      local fx = fxlist[i]
+      gfx.a = (fx.enabled and not fx.offlined) and 1 or MFXlist.FX_DISABLEDA -- disabled FX are shown faint
       -- if mouse hovers over this FX, draw it in different color
       if insidetrack and gfx.y <= MFXlist.mouse_y and MFXlist.mouse_y < gfx.y + MFXlist.SLOT_HEIGHT then
         gfx.set(MFXlist.COLOR_FXHOVERED[1], MFXlist.COLOR_FXHOVERED[2], MFXlist.COLOR_FXHOVERED[3], gfx.a)
         gfx.setfont(MFXlist.FONT_FXBOLD)
-        MFXlist.hovered_fx = {trinfo.track, i} -- store track and fx index for mouse click
+        MFXlist.fx_hovered = i -- store fx index (1-based!) for mouse click
+        -- Msg("fx_hovered assigned")
       else
         gfx.setfont(MFXlist.FONT_FXNAME)
         gfx.set(1, 1, 1, gfx.a)
       end
       gfx.x = 0
-      gfx.drawstr(fxlist[i].fxname, 1, gfx.w, gfx.y + MFXlist.SLOT_HEIGHT)
+      gfx.drawstr(fx.fxname, 1, gfx.w, gfx.y + MFXlist.SLOT_HEIGHT)
+      if fx.offlined then
+        local w, h = gfx.measurestr(fx.name)
+        local y = gfx.y+ MFXlist.SLOT_HEIGHT/2
+        gfx.line((gfx.w-w)/2, y, (gfx.w+w)/2, y, gfx.a)
+      end
       gfx.y = gfx.y + MFXlist.SLOT_HEIGHT
     end
   end
@@ -509,12 +574,11 @@ local function handleTracks()
   drawFooter()
 
 end -- handleTracks
-
 ---------------------------------------
-local function handleMenu(m_cap, mx, my)
+local function handleMenu(mcap, mx, my)
 
   local menustr = MFXlist.MENU_STR
-  if DO_DEBUG and m_cap & MFXlist.MOD_KEYS == MFXlist.MOD_CTRL then -- Ctrl only?
+  if DO_DEBUG and mcap & MFXlist.MOD_KEYS == MFXlist.MOD_CTRL then -- Ctrl only?
     menustr = menustr.." | (Setup 10)"
   end
   
@@ -537,8 +601,8 @@ local function handleMenu(m_cap, mx, my)
     local track, idx = getLastTCPTrackBinary(h)
     local endt = rpr.time_precise()
     Msg("Last visible track: "..idx.." ("..endt-startt..")")
-  elseif ret == MFXlist.MENU_DRAWTRACKS then
-    handleTracks()
+  elseif ret == MFXlist.MENU_FINDLEFTDOCK then
+    findLeftDock()
   end
   return ret
 end -- handleMenu
@@ -560,40 +624,102 @@ end -- swapCtrlShft
 -- bit indx  0    1     2    3    4    5     6
 local function handleMousewheel(wheel, mx, my)
   
-  local screenx, screeny = gfx.clienttoscreen(mx, my) --  are these necessary?
-  -- Need to move the x into the TCP window...
-  --screenx = screenx + gfx.w -- will not work if the TCP narrower than gfx.w and mouse is close to border
+  -- put mx slightly to the right of our own track draw area
+  -- to enter into the TCP area
+  mx = gfx.w + 7 -- 7 pixels into the TCP area should be enough
+  local screenx, screeny = gfx.clienttoscreen(mx, my) 
   
-  local mbkeys = swapCtrlShft(gfx.mouse_cap)
-  --Msg("mouse_cap: "..gfx.mouse_cap..", mbkeys: "..mbkeys)
-  
-  local retval = rpr.JS_WindowMessage_Send(MFXlist.TCP_HWND, 
-    "WM_MOUSEWHEEL", 
-    mbkeys, -- wParam, mouse buttons amd modifier keys
-    wheel, -- wParamHighWWord, wheel distance
-    screenx, screeny) -- lParam, lParamHighWord, need to fake it is over TCP?
+  -- There is an issue with passing mousewheel without mod keys on to the TCP
+  -- The message affects the TCP *and* the arrange view, so we must do something
+  if gfx.mouse_cap == 0 then
+    -- Msg("CMD_SCROLLVERT, mx: "..mx..", screenx: "..screenx)
+    -- rpr.Main_OnCommand(MFXlist.CMD_SCROLLVERT, 0) -- This does not work! Why?
+    local mbkeys = 0x18 -- Ctrl + Alt (?)
+       local retval = rpr.JS_WindowMessage_Send(MFXlist.TCP_HWND, 
+      "WM_MOUSEWHEEL", 
+      mbkeys, -- wParam, mouse buttons amd modifier keys
+      wheel, -- wParamHighWWord, wheel distance
+      screenx, screeny) -- lParam, lParamHighWord, need to fake it is over TCP?    
+  else
+    local mbkeys = swapCtrlShft(gfx.mouse_cap)
+    --Msg("mouse_cap: "..gfx.mouse_cap..", mbkeys: "..mbkeys)
+       local retval = rpr.JS_WindowMessage_Send(MFXlist.TCP_HWND, 
+      "WM_MOUSEWHEEL", 
+      mbkeys, -- wParam, mouse buttons amd modifier keys
+      wheel, -- wParamHighWWord, wheel distance
+      screenx, screeny) -- lParam, lParamHighWord, need to fake it is over TCP?
+  end
   
   gfx.mouse_wheel = 0
   
 end -- handleMousewheel
+------------------------------
+local function handleLeftMB(mcap, mx, my)
+  
+  local track = MFXlist.track_hovered
+
+  if not MFXlist.track_hovered then -- we clicked over empty area or ouside track area
+    
+    Msg("TODO! Left click over header or footer. What to do?")    
+    return
+    
+  elseif not MFXlist.fx_hovered then -- so we hover over track but not any fx
+    
+    
+    rpr.TrackFX_Show(track, 0, 1) -- show FX chain but with no FX, how to open Add FX dialog?
+    return
+    
+  end
+  
+  local index = MFXlist.fx_hovered
+  local modkeys = mcap & MFXlist.MOD_KEYS
+  -- Msg("modkeys: "..modkeys)
+  if modkeys == 0 then -- simple click, show/hide floating window
+    
+    local showhide = rpr.TrackFX_GetOpen(track, index-1) and 2 or 3
+    rpr.TrackFX_Show(track, index-1, showhide)
+    
+  elseif modkeys & (MFXlist.MOD_CTRL | MFXlist.MOD_ALT) == (MFXlist.MOD_CTRL | MFXlist.MOD_ALT) then
+    
+    local isoffline = rpr.TrackFX_GetOffline(track, index-1)
+    rpr.TrackFX_SetOffline(track, index-1, not isoffline)
+    
+  elseif modkeys & MFXlist.MOD_SHIFT == MFXlist.MOD_SHIFT then -- set/unset enabled
+    
+    local endisabled = not rpr.TrackFX_GetEnabled(track, index-1)
+    rpr.TrackFX_SetEnabled(track, index-1, endisabled)
+    
+  elseif modkeys & MFXlist.MOD_CTRL == MFXlist.MOD_CTRL then -- show/hide chain
+    
+    local openclose = rpr.TrackFX_GetOpen(track, index-1) and 0 or 1
+    rpr.TrackFX_Show(track, index-1, openclose)
+    
+  elseif modkeys & MFXlist.MOD_ALT == MFXlist.MOD_ALT then -- delete
+    
+    rpr.TrackFX_Delete(track, index-1)
+    
+  end
+  
+end -- handleLeftMB
 ----------------------------
 local function handleMouse()
   
   local mx, my = gfx.mouse_x, gfx.mouse_y
   
+  -- if we are not inside the client rect, we can just as well return (but not quit)
   if mx < 0 or gfx.w < mx or my < 0 or gfx.h < my then -- outside of client area
     MFXlist.mouse_y = nil
     MFXlist.footer_text = MFXlist.SCRIPT_NAME
-    return true -- if we are not inside the client rect, we can just as well return (but not quit)
+    return true 
   end    
   
   -- Are we inside the track draw area?
   if 0 <= mx and mx <= gfx.w and MFXlist.TCP_top <= my and my <= MFXlist.TCP_bot then 
     -- this only works when docked (but then... lots of stuff here only works when docked)
     MFXlist.mouse_y = my
-    MFXlist.hovered_fx = {0, 0} -- zerozero means not over any FX
+    --MFXlist.fx_hovered = nil -- {0, 0} -- zerozero means not over any FX
   else -- either in header or in footer
-    MFXlist.hovered_fx = nil
+    MFXlist.fx_hovered = nil
     MFXlist.mouse_y = nil
     MFXlist.footer_text = MFXlist.SCRIPT_NAME
   end
@@ -604,6 +730,16 @@ local function handleMouse()
   local mcap = gfx.mouse_cap
   local mbldown = mcap & MFXlist.MB_LEFT
   local mbrdown = mcap & MFXlist.MB_RIGHT
+  
+  -- is left mouse button clicked?
+  if mbldown == MFXlist.MB_LEFT and mblprev ~= MFXlist.MB_LEFT then
+    mblprev = MFXlist.MB_LEFT
+    handleLeftMB(mcap, mx, my)
+  elseif mbldown ~= MFXlist.MB_LEFT and mblprev == MFXlist.MB_LEFT then
+    mblprev = 0
+  end
+  
+  -- is right mouse button clicked?
   if mbrdown == MFXlist.MB_RIGHT and mbrprev ~= MFXlist.MB_RIGHT then
     --local mx, my = gfx.mouse_x, gfx.mouse_y
     mbrprev = MFXlist.MB_RIGHT
@@ -633,6 +769,8 @@ end -- openWindow
 ------------------------------------------------ 
 local function initializeScript()
   
+  -- findLeftDock() -- doesnt work (yet)
+  
   rpr.atexit(exitScript)
   openWindow()
   
@@ -640,7 +778,7 @@ local function initializeScript()
   gfx.setfont(MFXlist.FONT_FXBOLD, MFXlist.FONT_NAME1, MFXlist.FONT_SIZE1, MFXlist.FONT_BOLDFLAG)
   gfx.setfont(MFXlist.FONT_HEADER, MFXlist.FONT_NAME2, MFXlist.FONT_SIZE2)
   
-  local hwnd, x, y, w, h = getTCPProperties() -- screen coordinates
+  local hwnd, x, y, w, h = getTCPProperties(MFXlist.CLASS_TCPDISPLAY) -- screen coordinates
   assert(hwnd, "Could not get TCP HWND, cannot do much now, sorry")
   MFXlist.TCP_HWND = hwnd
   
@@ -709,4 +847,5 @@ https://forum.cockos.com/showthread.php?t=212174
 https://forum.cockos.com/showthread.php?t=222314
 https://forum.cockos.com/showthread.php?t=207081
 https://forum.cockos.com/showthread.php?p=2203603
+https://forum.cockos.com/showthread.php?t=221174
 --]]
