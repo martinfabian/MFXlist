@@ -1,6 +1,6 @@
 -- @description FX list for Reaper left docker (MFX-list)
 -- @author M Fabian, inlcudes code by Edgemeal
--- @version 0.0.1
+-- @SCRIPT_version 0.0.1
 -- @changelog
 --   Nothing yet, or rather... everything
 -- @link
@@ -29,8 +29,10 @@ end
 -- Non-constants are used to communicate between different parts of the code
 local MFXlist = 
 { 
-  VERSION = "0.0.1",
-  SCRIPT_NAME = "MFX-list v0.0.1",
+  SCRIPT_VERSION = "v0.0.1",
+  SCRIPT_NAME = "MFX-list",
+  SCRIPT_AUTHORS = {"M Fabian"},
+  SCRIPT_YEAR = "2020",
   
   MB_LEFT = 1,
   MB_RIGHT = 2,
@@ -45,11 +47,13 @@ local MFXlist =
   track_hovered = nil, -- is set to the track (ptr) currently under mouse cursor, nil if mouse outside of client are
   fx_hovered = nil, -- is set to the index (1-based!) of FX under the mouse cursor, nil if mouse is outside of current track FX 
   
-  MENU_STR = "Find left dock|Show first track|Show last track|Quit",
-  MENU_FINDLEFTDOCK = 1,
+  MENU_STR = "Linear find last|Show first track|Show last track|Info|Quit",
+  MENU_FINDLEFTDOCK = 100, -- 100 means "not used"
+  MENU_LINEARFINDLAST = 1,
   MENU_SHOWFIRSTTCP = 2,
   MENU_SHOWLASTTCP = 3,
-  MENU_QUIT = 4,
+  MENU_SHOWINFO = 4,
+  MENU_QUIT = 5,
 
   COLOR_BLACK   = {012/255, 012/255, 012/255},
   COLOR_VST     = {},
@@ -108,7 +112,8 @@ local MFXlist =
   BLITBUF_HEADW = 300,
   BLITBUF_HEADH = 300,
   
-  footer_text = "MFX-list",
+  footer_text = "MFX-list", -- changes after initializing, shows name of currently hovered track
+  header_text = "MFX-list", -- this doesn't really change after initialzing
 }
 
 local CURR_PROJ = 0
@@ -243,16 +248,17 @@ local function getTCPProperties(classname)
   end
   return nil, -1, -1, -1, -1
 end
---------------------------------------------------------
+----------------------------------------------------------------
+-- This doesn't work, I find no way to make sense of the docker
 local function findLeftDock()
   
   local mhwnd = rpr.GetMainHwnd()
   local _, mleft, mtop, mright, mbottom = rpr.JS_Window_GetClientRect(mhwnd)
   Msg("MainHwnd, left: "..mleft..", top: "..mtop..", right: "..mright..", bottom: "..mbottom)
   
-  local adr = getTitleMatchWindows("REAPER_dock", true)
+  local adr = getTitleMatchWindows("REAPER_dock", true) -- this does get all 16 dockers
   local count = #adr
-  local docknumber = 0 -- guessing that the dockers come in order
+  local docknumber = 0 -- the order of how the dockers are returned does not make sense to me
   for i = 1, count do
     local hwnd = rpr.JS_Window_HandleFromAddress(adr[i]) 
     --local classname = rpr.JS_Window_GetClassName(hwnd)
@@ -260,7 +266,7 @@ local function findLeftDock()
     --if classname == "REAPER_dock" then
       local _, left, top, right, bottom = rpr.JS_Window_GetRect(hwnd) 
       Msg("REAPER_dock #"..docknumber..", left: "..left..", top: "..top..", right: "..right..", bottom: "..bottom)
-      if left == mleft then -- this should be the left docker
+      if left == mleft then -- this should be the left docker?
         -- then what? how to get its number? do they come in order?
         --MFXlist.LEFT_ARRANGEDOCKER = 2^docknumber + 1
       end
@@ -422,7 +428,6 @@ local function getLastTCPTrackBinary(tcpheight)
   if posy < tcpheight then return track, numtracks end
   
   -- else, do a binary search
-  -- A linear search from the first visible track could be faster...
   local left, right = 0, numtracks - 1
   while left <= right do
     local index = math.floor((left + right) / 2)
@@ -439,9 +444,36 @@ local function getLastTCPTrackBinary(tcpheight)
     end
   end
 
-  return nil, 0
+  return nil, 0 -- we should never really get here
   
 end -- getLastTCPTrackBinary
+--------------------------------------------------------------------
+-- Since the TCP has a limited number of visible tracks, a linear search
+-- starting from the first visible track may be faster than a binary
+-- That was the idea, but measuring there seems to be no significant improvement
+-- Instead binary search is slightly better with many visible tracks 
+local function getLastTCPTrackLinear(tcpheight, firsttrack)
+  assert(tcpheight and firsttrack, "getLastTrackLinear: invalid parameter - tcpheight or firsttrack")
+
+  -- Same as in binary search, first take care of some obvious easy cases
+  local numtracks = rpr.CountTracks(CURR_PROJ)
+  if numtracks == 0 then return nil, 0 end
+  
+  -- is the last track visible?, If so we are done
+  local track = rpr.GetTrack(CURR_PROJ, numtracks-1)
+  local posy, _ = getTrackPosAndHeight(track)
+  if posy < tcpheight then return track, numtracks end
+  
+  -- else, look from the first towards the last linearily
+  for i = firsttrack, numtracks do -- firsttrack is 1-based
+    local track = rpr.GetTrack(CURR_PROJ, i-1)
+    local posy, height = getTrackPosAndHeight(track)
+    if posy + height > tcpheight then return track, i end
+  end
+
+  assert(nil, "getLastTCPTrackLinear: should not really get here!")
+  
+end -- getLastTCPTrackLinear
 --------------------------------------------
 -- Tracks can be invisible for two reasons:
 -- 1. outside the TCP bounding box
@@ -452,7 +484,6 @@ local function collectVisibleTracks()
   
   local _, findex = getFirstTCPTrackBinary()
   local _, lindex = getLastTCPTrackBinary(h)
-  --Msg("First/last visible track: "..findex..", "..lindex)
   
   local vistracks = {}
   if findex < 0 then return vistracks end -- No visible tracks
@@ -484,7 +515,7 @@ local function drawHeader()
   gfx.set(1, 1, 1, 0.7)
   gfx.x, gfx.y = 0, 0
   gfx.setfont(MFXlist.FONT_HEADER)
-  gfx.drawstr(MFXlist.SCRIPT_NAME, 5, gfx.w, MFXlist.TCP_top)
+  gfx.drawstr(MFXlist.header_text, 5, gfx.w, MFXlist.TCP_top)
   --]]
   --[[ -- Cannot get this to work correctly, don't know why, giving up for now
   -- Blit the bufhead
@@ -574,11 +605,19 @@ local function handleTracks()
   drawFooter()
 
 end -- handleTracks
+--------------------------------
+local function showInfo(mx, my)
+  
+  Msg(MFXlist.SCRIPT_NAME.." "..MFXlist.SCRIPT_VERSION)
+  local authors = table.concat(MFXlist.SCRIPT_AUTHORS, ", ")
+  Msg(authors..", "..MFXlist.SCRIPT_YEAR)
+  
+end -- showInfo
 ---------------------------------------
 local function handleMenu(mcap, mx, my)
 
   local menustr = MFXlist.MENU_STR
-  if DO_DEBUG and mcap & MFXlist.MOD_KEYS == MFXlist.MOD_CTRL then -- Ctrl only?
+  if DO_DEBUG and mcap & MFXlist.MOD_KEYS == MFXlist.MOD_CTRL then -- Ctrl only
     menustr = menustr.." | (Setup 10)"
   end
   
@@ -588,6 +627,8 @@ local function handleMenu(mcap, mx, my)
   local ret = gfx.showmenu(menustr)
   if ret == MFXlist.MENU_QUIT then
     return ret
+  elseif ret == MFXlist.MENU_SHOWINFO then
+    showInfo(mx, my)
   elseif ret == MENU_SETUP10 then
     setupForTesting(10)
   elseif ret == MFXlist.MENU_SHOWFIRSTTCP then
@@ -600,11 +641,20 @@ local function handleMenu(mcap, mx, my)
     local startt = rpr.time_precise()
     local track, idx = getLastTCPTrackBinary(h)
     local endt = rpr.time_precise()
-    Msg("Last visible track: "..idx.." ("..endt-startt..")")
+    Msg("Last visible track (bin): "..idx.." ("..endt-startt..")")
+  elseif ret == MFXlist.MENU_LINEARFINDLAST then
+    local ftrack, fidx = getFirstTCPTrackBinary()
+    local _, _, _, h = GetClientBounds(MFXlist.TCP_HWND)
+    local startt = rpr.time_precise()
+    local ltrack, lidx = getLastTCPTrackLinear(h, fidx)
+    local endt = rpr.time_precise()
+    Msg("Last visible track (lin): "..lidx.." ("..endt-startt..")")
   elseif ret == MFXlist.MENU_FINDLEFTDOCK then
     findLeftDock()
   end
+  
   return ret
+  
 end -- handleMenu
 --------------------------------------------
 -- Swap bits 2 and 3 (0-based from the left)
@@ -758,10 +808,12 @@ local function handleMouse()
   
 end -- handleMouse
 -----------------------------
+-- Write EXSTATE info
 local function exitScript()
   Msg("Bye, bye")
 end -- exitScript
-------------------------------------------------
+------------------------------------------------------------
+-- Read EXSTATE info and set up in previous docker (if any)
 local function openWindow()
   gfx.clear = MFXlist.COLOR_EMPTYSLOT[1] * 255 + MFXlist.COLOR_EMPTYSLOT[2] * 255 * 256 + MFXlist.COLOR_EMPTYSLOT[3] * 255 * 65536
   gfx.init(MFXlist.SCRIPT_NAME, MFXlist.WIN_W, MFXlist.WIN_H, MFXlist.LEFT_ARRANGEDOCKER, MFXlist.WIN_X, MFXlist.WIN_Y)
@@ -773,6 +825,8 @@ local function initializeScript()
   
   rpr.atexit(exitScript)
   openWindow()
+  
+  MFXlist.header_text = MFXlist.SCRIPT_NAME.." "..MFXlist.SCRIPT_VERSION
   
   gfx.setfont(MFXlist.FONT_FXNAME, MFXlist.FONT_NAME1, MFXlist.FONT_SIZE1)
   gfx.setfont(MFXlist.FONT_FXBOLD, MFXlist.FONT_NAME1, MFXlist.FONT_SIZE1, MFXlist.FONT_BOLDFLAG)
