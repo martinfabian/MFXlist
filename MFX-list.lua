@@ -11,17 +11,20 @@
 --   # Native ReaScript reimplementation of Doppelganger's FXlist (only the FX part, not the send stuff etc)
 --   # Needs the js_ReaScriptAPI (tested with reaper_js_ReaScriptAPI64.dll) by 
 --   #         Julian Sander, https://forum.cockos.com/showthread.php?t=212174
+--   # Developed using ZeroBrane Studio as IDE, https://studio.zerobrane.com/
 
--- TODO! BIG THING! Have to give focus back to arrange view, otherwise spacebar does not play WTF? 
--- TODO! There is some type of focus-steling going on. Click an FX, while its windo wis open, spacebar works as play
+-- TODO! BIG THING! Have to give focus back to arrange view, otherwise spacebar does not play! WTF? 
+-- TODO! There is some type of focus-steling going on. Click an FX, while its window is open, spacebar works as play
 --       But click again (on MFXlist) to close the floating window. Now spacebar does NOT play! WTF sorcery is this?
 -- TODO! Fix the scrolling, Mousewheel scroll over MFXlist sends message to TCP, but the arrange view is scrolled! 
--- TODO! Clicking in track area outside of any FX opens FX Chain window. Clicking again, should close it
--- TODO! Find left docker to attach to
+-- TODO! Ctrl+Mousewheel in track area does not work correctly
+-- TODO! Clicking in track area outside of any FX opens FX Chain window. Clicking again, should close it. How to? 
+-- TODO! Find left docker to attach to automatically? Manual positiono works and is saved, but...
 -- TODO! Allow drag of FX within and between track(s) rpr.TrackFX_CopyToTrack(src_track, src_fx, dest_track, dest_fx, bool is_move)
 --       Note that this requires change to the handling of teh left MB, as it is now, down is interpreted as click
--- TODO! Track with FX chain disabled, looks no different from each FX disabled by itself (same as dopplist), but maybe should? How?
-
+-- Done! Track with FX chain disabled, looks no different from each FX disabled by itself (same as dopplist), but maybe should? How?
+-- TODO! Dragging, clicking, or just holding left MB down on header or footer should scroll, down for header, up for footer
+-- TODO! Partially visible FX name inside track rectangle is not cropped correctly. floor was changed to ceil, but not good enough
 -- POSS? Double-click... to do what? Nah, too much hassle, have to keep track of time in-between LMB up and down...
 
 local string, table, math, os, utf8 = string, table, math, os, utf8
@@ -83,6 +86,7 @@ local MFXlist =
   MOD_KEYS = 4+8+16+32, 
   
   -- determinse how far nmouse can be moved between down and up to still be considered a left click
+  -- this then also decides how much the mosue has to move with left MB down to be considered as dragging
   CLICK_RESOX = 10, -- it makes sense to horizontally accept more movement than vertically
   CLICK_RESOY = 3, 
   
@@ -140,7 +144,9 @@ local MFXlist =
   
   drag_startx = nil, -- used for left MB drag actions
   drag_starty = nil,
-  drag_object = nil, -- [track, fx} that is dragged, given by track_hovered, fx_hovered
+  drag_object = nil, -- {track, fx} that is dragged, given by track_hovered, fx_hovered
+  drag_endx = nil,
+  drag_endy = nil,
   
   footer_text = "MFX-list", -- changes after initializing, shows name of currently hovered track
   header_text = "MFX-list", -- this doesn't really change after initialzing, but could if useful
@@ -611,7 +617,7 @@ local function handleTracks()
     end
     -- Calc the number of FX slots to draw, and draw them
     local fxlist = trinfo.fx
-    local numfxs = math.ceil(height / MFXlist.SLOT_HEIGHT) -- max num FX to show
+    local numfxs = math.ceil(height / MFXlist.SLOT_HEIGHT) -- max num FX to show 
     local count = math.min(#fxlist, numfxs)
     gfx.x, gfx.y = 0, drawy + posy  -- drawing FX names start at this position
     for i = 1, count do
@@ -628,7 +634,8 @@ local function handleTracks()
         gfx.set(1, 1, 1, gfx.a)
       end
       gfx.x = 0
-      gfx.drawstr(fx.fxname, 1, gfx.w, gfx.y + MFXlist.SLOT_HEIGHT)
+      local corner = math.min(gfx.y + MFXlist.SLOT_HEIGHT, drawy+posy+height-1) -- make sure to crop within the bounding track rect
+      gfx.drawstr(fx.fxname, 1, gfx.w, corner) 
       if fx.offlined then
         local w, h = gfx.measurestr(fx.name)
         local y = gfx.y+ MFXlist.SLOT_HEIGHT/2
@@ -965,10 +972,11 @@ local function openWindow()
   end
   local docker = dockstate
   
-  local x, y, w, h = MFXlist.WIN_X, MFXlist.WIN_Y, MFXlist.WIN_W, MFXlist.WIN_H
+  -- local x, y, w, h = MFXlist.WIN_X, MFXlist.WIN_Y, MFXlist.WIN_W, MFXlist.WIN_H
   if rpr.HasExtState(MFXlist.SCRIPT_NAME, "coords") then
       local coordstr = rpr.GetExtState(MFXlist.SCRIPT_NAME, "coords")
-      x, y, w, h = coordstr:match("(%d+),(%d+),(%d+),(%d+)")
+      local x, y, w, h = coordstr:match("(%d+),(%d+),(%d+),(%d+)")
+      MFXlist.WIN_X, MFXlist.WIN_Y, MFXlist.WIN_W, MFXlist.WIN_H = tonumber(x), tonumber(y), tonumber(w), tonumber(h)
   end
   
   gfx.clear = MFXlist.COLOR_EMPTYSLOT[1] * 255 + MFXlist.COLOR_EMPTYSLOT[2] * 255 * 256 + MFXlist.COLOR_EMPTYSLOT[3] * 255 * 65536
