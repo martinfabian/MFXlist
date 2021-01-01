@@ -8,12 +8,21 @@
 -- @screenshot 
 -- @donation something.good.for.humankind 
 -- @about
---   # Native ReaScript reimplementation of Doppelganger's FXlist
+--   # Native ReaScript reimplementation of Doppelganger's FXlist (only the FX part, not the send stuff etc)
 --   # Needs the js_ReaScriptAPI (tested with reaper_js_ReaScriptAPI64.dll) by 
 --   #         Julian Sander, https://forum.cockos.com/showthread.php?t=212174
 
--- TODO! Fix the scrolling, only ShiftCtrl+Mousewheel, View: Adjust selected track heights (MIDI CC relative/mousewheel), 972 works as it shoudl!
+-- TODO! BIG THING! Have to give focus back to arrange view, otherwise spacebar does not play WTF? 
+-- TODO! There is some type of focus-steling going on. Click an FX, while its windo wis open, spacebar works as play
+--       But click again (on MFXlist) to close the floating window. Now spacebar does NOT play! WTF sorcery is this?
+-- TODO! Fix the scrolling, Mousewheel scroll over MFXlist sends message to TCP, but the arrange view is scrolled! 
+-- TODO! Clicking in track area outside of any FX opens FX Chain window. Clicking again, should close it
 -- TODO! Find left docker to attach to
+-- TODO! Allow drag of FX within and between track(s) rpr.TrackFX_CopyToTrack(src_track, src_fx, dest_track, dest_fx, bool is_move)
+--       Note that this requires change to the handling of teh left MB, as it is now, down is interpreted as click
+-- TODO! Track with FX chain disabled, looks no different from each FX disabled by itself (same as dopplist), but maybe should? How?
+
+-- POSS? Double-click... to do what? Nah, too much hassle, have to keep track of time in-between LMB up and down...
 
 local string, table, math, os, utf8 = string, table, math, os, utf8
 local load, xpcall, pairs, ipairs = load, xpcall, pairs, ipairs, select
@@ -25,54 +34,22 @@ local function Msg(str)
 end
 -------------------------------------------
 -- Globals, variables with underscore are global
--- All capitals are constants, do not assign to these in the code
+-- All caps denotes constants, do not assign to these in the code!
 -- Non-constants are used to communicate between different parts of the code
 local MFXlist = 
 { 
-  SCRIPT_VERSION = "v0.0.1",
-  SCRIPT_NAME = "MFX-list",
-  SCRIPT_AUTHORS = {"M Fabian"},
-  SCRIPT_YEAR = "2020",
-  
-  MB_LEFT = 1,
-  MB_RIGHT = 2,
-  
-  MOD_CTRL = 4, 
-  MOD_SHIFT = 8,
-  MOD_ALT = 16, 
-  MOD_WIN = 32, 
-  MOD_KEYS = 4+8+16+32, 
-  
-  mouse_y = nil, -- is set to mouse_y when mouse inside MFXlist, else nil
-  track_hovered = nil, -- is set to the track (ptr) currently under mouse cursor, nil if mouse outside of client are
-  fx_hovered = nil, -- is set to the index (1-based!) of FX under the mouse cursor, nil if mouse is outside of current track FX 
-  
-  MENU_STR = "Linear find last|Show first track|Show last track|Info|Quit",
-  MENU_FINDLEFTDOCK = 100, -- 100 means "not used"
-  MENU_LINEARFINDLAST = 1,
-  MENU_SHOWFIRSTTCP = 2,
-  MENU_SHOWLASTTCP = 3,
-  MENU_SHOWINFO = 4,
-  MENU_QUIT = 5,
-
+  -- user settable stuff
+  COLOR_EMPTYSLOT = {40/255, 40/255, 40/255},
+  COLOR_FXHOVERED = {1, 1, 0}, 
+  --[[ not used for now
   COLOR_BLACK   = {012/255, 012/255, 012/255},
   COLOR_VST     = {},
   COLOR_JSFX    = {},
   COLOR_HIGHLIGHT = {},
-  COLOR_EMPTYSLOT = {40/255, 40/255, 40/255},
   COLOR_FAINT = {60/255, 60/255, 60/255},
-  COLOR_FXHOVERED = {1, 1, 0}, 
-  
+  --]]
   FX_DISABLEDA = 0.3, -- fade of name for disabled FX
   FX_OFFLINEDA = 0.1, -- even fainter for offlined FX
-  
-  FXCHAIN_HIDE = 0, -- flags for TrackFX_Show(track, fxindx, flags)
-  FXCHAIN_SHOW = 1,
-  FXFLOAT_HIDE = 2,
-  FXFLOAT_SHOW = 3,
-  
-  TRACK_FXENABLED = 4, -- flags for GetTrackState(track)
-  TRACK_MUTED = 8,
   
   FONT_NAME1 = "Arial",
   FONT_NAME2 = "Courier New",
@@ -89,16 +66,59 @@ local MFXlist =
   FONT_UNDERFLAG = 0x55000000,  -- underline
   FONT_INVFLAG = 0x56000000,    -- invert  
   
+  -- Script specific constants, from here below change only if you really know what you are doing
+  SCRIPT_VERSION = "v0.0.1",
+  SCRIPT_NAME = "MFX-list",
+  SCRIPT_AUTHORS = {"M Fabian"},
+  SCRIPT_YEAR = "2020",
+  
+  -- Mouse button and modifier key constants
+  MB_LEFT = 1,
+  MB_RIGHT = 2,
+  
+  MOD_CTRL = 4, 
+  MOD_SHIFT = 8,
+  MOD_ALT = 16, 
+  MOD_WIN = 32, 
+  MOD_KEYS = 4+8+16+32, 
+  
+  -- determinse how far nmouse can be moved between down and up to still be considered a left click
+  CLICK_RESOX = 10, -- it makes sense to horizontally accept more movement than vertically
+  CLICK_RESOY = 3, 
+  
+  -- Right click menu 
+  MENU_STR = "Linear find last|Show first track|Show last track|Info|Quit",
+  MENU_FINDLEFTDOCK = 100, -- big number means "not used"
+  MENU_LINEARFINDLAST = 1,
+  MENU_SHOWFIRSTTCP = 2,
+  MENU_SHOWLASTTCP = 3,
+  MENU_SHOWINFO = 4,
+  MENU_QUIT = 5,
+  
+  -- Flag constants for TrackFX_Show(track, index, showFlag)
+  FXCHAIN_HIDE = 0, 
+  FXCHAIN_SHOW = 1,
+  FXFLOAT_HIDE = 2,
+  FXFLOAT_SHOW = 3,
+  
+  -- flag constants for GetTrackState(track) return
+  TRACK_FXENABLED = 4, 
+  TRACK_MUTED = 8, -- seemed liek a good idea, but don't know how to really use it
+  
+  -- Height for FX slots, FX names are drawn sentered (and clipped) inside this high rectangles
   SLOT_HEIGHT = 13, -- pixels high
   
+  -- For matching and shrinking FX names
   MATCH_UPTOCOLON = "(.-:)",
   
+  -- Nondocked window size, and docker address (overridden from EXTSTATE if such exists)
   WIN_X = 1000,
   WIN_Y = 200,
   WIN_W = 200,
   WIN_H = 200,
   LEFT_ARRANGEDOCKER = 512+1, -- 512 = left of arrange view, +1 == docked (not universally true)
   
+  -- Window class names to look for, I have no idea how or if this works on Mac/Linux
   -- CLASS_TRACKLISTWIN = "REAPERTrackListWindow", -- this is the arrange view where the media items live
   CLASS_TCPDISPLAY = "REAPERTCPDisplay", -- this is the TCP where the track panes live
   
@@ -108,12 +128,22 @@ local MFXlist =
   
   CMD_SCROLLVERT = 989, -- View: Scroll vertically (MIDI CC relative/mousewheel)
   
-  BLITBUF_HEAD = 16, -- off-screen draw buffer for the header
+  -- off-screen draw buffer for the header (coudl not get thsi to work, see drawHeader() below)
+  BLITBUF_HEAD = 16, 
   BLITBUF_HEADW = 300,
   BLITBUF_HEADH = 300,
   
+  -- Globally accessible variables used to communicate between different parts of the code
+  mouse_y = nil, -- is set to mouse_y when mouse inside MFXlist, else nil
+  track_hovered = nil, -- is set to the track (ptr) currently under mouse cursor, nil if mouse outside of client are
+  fx_hovered = nil, -- is set to the index (1-based!) of FX under the mouse cursor, nil if mouse is outside of current track FX 
+  
+  drag_startx = nil, -- used for left MB drag actions
+  drag_starty = nil,
+  drag_object = nil, -- [track, fx} that is dragged, given by track_hovered, fx_hovered
+  
   footer_text = "MFX-list", -- changes after initializing, shows name of currently hovered track
-  header_text = "MFX-list", -- this doesn't really change after initialzing
+  header_text = "MFX-list", -- this doesn't really change after initialzing, but could if useful
 }
 
 local CURR_PROJ = 0
@@ -516,8 +546,11 @@ local function drawHeader()
   gfx.x, gfx.y = 0, 0
   gfx.setfont(MFXlist.FONT_HEADER)
   gfx.drawstr(MFXlist.header_text, 5, gfx.w, MFXlist.TCP_top)
+  gfx.a = MFXlist.FX_DISABLEDA
+  gfx.line(0, MFXlist.TCP_top, gfx.w, MFXlist.TCP_top)
   --]]
   --[[ -- Cannot get this to work correctly, don't know why, giving up for now
+       -- It does not blit over the top part of the track draw
   -- Blit the bufhead
   gfx.dest = -1
   local headw, headh = gfx.getimgdim(MFXlist.BLITBUF_HEAD)
@@ -563,23 +596,27 @@ local function handleTracks()
     local trinfo = vistracks[i]
     local posy = trinfo.posy
     local height = trinfo.height
-    local enabled = trinfo.enabled
+    local tenabled = trinfo.enabled -- track FX chain enabled
     if MFXlist.mouse_y and posy <= MFXlist.mouse_y-drawy and MFXlist.mouse_y-drawy <= posy + height then
       MFXlist.footer_text = trinfo.name
       insidetrack = true -- send message to FX part of code, see below
       MFXlist.track_hovered = trinfo.track
     end
     -- Draw bounding box for track FX
-    gfx.a = MFXlist.FX_OFFLINEDA -- always faint
-    gfx.rect(0, drawy + posy, gfx.w, height, 0) -- rect around the slots for this track
+    gfx.a = MFXlist.FX_OFFLINEDA -- bounding box is always drawn faint
+    if not tenabled then
+      gfx.rect(0, drawy + posy, gfx.w, height, 1)
+    else
+      gfx.rect(0, drawy + posy, gfx.w, height, 0) -- rect around the slots for this track
+    end
     -- Calc the number of FX slots to draw, and draw them
     local fxlist = trinfo.fx
-    local numfxs = math.floor(height / MFXlist.SLOT_HEIGHT) -- max num FX to show
+    local numfxs = math.ceil(height / MFXlist.SLOT_HEIGHT) -- max num FX to show
     local count = math.min(#fxlist, numfxs)
     gfx.x, gfx.y = 0, drawy + posy  -- drawing FX names start at this position
     for i = 1, count do
       local fx = fxlist[i]
-      gfx.a = (fx.enabled and not fx.offlined) and 1 or MFXlist.FX_DISABLEDA -- disabled FX are shown faint
+      gfx.a = (fx.enabled and not fx.offlined and tenabled) and 1 or MFXlist.FX_DISABLEDA -- disabled FX are shown faint
       -- if mouse hovers over this FX, draw it in different color
       if insidetrack and gfx.y <= MFXlist.mouse_y and MFXlist.mouse_y < gfx.y + MFXlist.SLOT_HEIGHT then
         gfx.set(MFXlist.COLOR_FXHOVERED[1], MFXlist.COLOR_FXHOVERED[2], MFXlist.COLOR_FXHOVERED[3], gfx.a)
@@ -605,12 +642,15 @@ local function handleTracks()
   drawFooter()
 
 end -- handleTracks
---------------------------------
+-----------------------------------------
+-- Shows it in Reaper's console (for now)
+-- Not using Msg here, since we want this
+-- to show even if DO_DEBUG is false
 local function showInfo(mx, my)
   
-  Msg(MFXlist.SCRIPT_NAME.." "..MFXlist.SCRIPT_VERSION)
+  rpr.ShowConsoleMsg(MFXlist.SCRIPT_NAME.." "..MFXlist.SCRIPT_VERSION..'\n')
   local authors = table.concat(MFXlist.SCRIPT_AUTHORS, ", ")
-  Msg(authors..", "..MFXlist.SCRIPT_YEAR)
+  rpr.ShowConsoleMsg(authors..", "..MFXlist.SCRIPT_YEAR..'\n')
   
 end -- showInfo
 ---------------------------------------
@@ -668,7 +708,7 @@ local function swapCtrlShft(bits)
 end -- swapCtrlShft
 ---------------------------------------------------------------
 -- Mouse wheel over MFXlist, send the TCP a mousewheel message
--- Need to "interpret" modifier keys to windows standard
+-- Need to "interpret" modifier keys to windows standard (?)
 -- Reaper:  MLB, MRB, CTRL, SHFT, ALT, WIN, MID mouse button
 -- Windows: MLB, MRB, SHFT, CTRL,    ,    , MID mouse button
 -- bit indx  0    1     2    3    4    5     6
@@ -676,14 +716,19 @@ local function handleMousewheel(wheel, mx, my)
   
   -- put mx slightly to the right of our own track draw area
   -- to enter into the TCP area
-  mx = gfx.w + 7 -- 7 pixels into the TCP area should be enough
+  --mx = gfx.w + 7 -- 7 pixels into the TCP area should be enough
   local screenx, screeny = gfx.clienttoscreen(mx, my) 
+  --screenx = screenx + 7
+  -- There does not seem tyo be much difference whethetr I do one or the other... or none
   
   -- There is an issue with passing mousewheel without mod keys on to the TCP
-  -- The message affects the TCP *and* the arrange view, so we must do something
+  -- The message does not affect the TCP, instead the arrange view zooms
   if gfx.mouse_cap == 0 then
     -- Msg("CMD_SCROLLVERT, mx: "..mx..", screenx: "..screenx)
     -- rpr.Main_OnCommand(MFXlist.CMD_SCROLLVERT, 0) -- This does not work! Why?
+    
+    -- Instead, for plain Mousewheel, we send Ctr+Alt+Mousewheel, but this STILL
+    -- does not scroll the TCP, but zooms the arrange view horizontally
     local mbkeys = 0x18 -- Ctrl + Alt (?)
        local retval = rpr.JS_WindowMessage_Send(MFXlist.TCP_HWND, 
       "WM_MOUSEWHEEL", 
@@ -707,47 +752,100 @@ end -- handleMousewheel
 local function handleLeftMB(mcap, mx, my)
   
   local track = MFXlist.track_hovered
-
-  if not MFXlist.track_hovered then -- we clicked over empty area or ouside track area
+  local index = MFXlist.fx_hovered
+  local modkeys = mcap & MFXlist.MOD_KEYS
+  
+  if not track then -- we clicked oustide track area, header or footer
     
     Msg("TODO! Left click over header or footer. What to do?")    
     return
     
   elseif not MFXlist.fx_hovered then -- so we hover over track but not any fx
-    
-    
-    rpr.TrackFX_Show(track, 0, 1) -- show FX chain but with no FX, how to open Add FX dialog?
-    return
+    -- Left click inside track rect but not on FX
+    if modkeys == 0 then
+      -- No modifier key, toggle FX Chain window (would want to open Add FX dialog, but how?)
+      local count = rpr.TrackFX_GetCount(track)
+      local openclose = rpr.TrackFX_GetOpen(track, count) and 0 or 1 
+      rpr.TrackFX_Show(track, count, openclose) -- does not work to toggle?
+      return
+    -- Note that modfier key check must come in this order. Reaper ha sthat wrong in many cases
+    elseif modkeys & (MFXlist.MOD_SHIFT | MFXlist.MOD_CTRL | MFXlist.MOD_ALT) == (MFXlist.MOD_SHIFT | MFXlist.MOD_CTRL | MFXlist.MOD_ALT) then
+      -- Shift+Ctrl+Alt
+      Msg("TODO! Left click over track empty area with Shift+Ctrl+Alt key!")
+      return
+    elseif modkeys & (MFXlist.MOD_SHIFT | MFXlist.MOD_ALT) == (MFXlist.MOD_SHIFT | MFXlist.MOD_ALT) then
+      -- Shift+Alt
+      Msg("TODO! Left click over track empty area with Shift+Alt key!")
+      return
+    elseif modkeys & (MFXlist.MOD_SHIFT | MFXlist.MOD_CTRL) == (MFXlist.MOD_SHIFT | MFXlist.MOD_CTRL) then
+      -- Shift+Ctrl
+      Msg("TODO! Left click over track empty area with Shift+Ctrl key!")
+      return
+    elseif modkeys & (MFXlist.MOD_CTRL | MFXlist.MOD_ALT) == (MFXlist.MOD_CTRL | MFXlist.MOD_ALT) then
+      -- Ctrl+Alt
+      Msg("TODO! Left click over track empty area with Ctrl+Alt key!")
+      return
+    elseif modkeys & MFXlist.MOD_SHIFT == MFXlist.MOD_SHIFT then 
+      -- Shift key
+      Msg("TODO! Left click over track empty area with Shift key!")
+      return
+    elseif modkeys & MFXlist.MOD_CTRL == MFXlist.MOD_CTRL then
+      -- Ctrl key
+      Msg("TODO! Left click over track empty area with Ctrl key!")
+      return
+    elseif modkeys & MFXlist.MOD_ALT == MFXlist.MOD_ALT then
+      -- Alt key
+      Msg("TODO! Left click over track empty area with Alt key!")
+      return
+    else
+      assert(nil, "handleLeftMB (1): should not get here!")
+    end
     
   end
   
-  local index = MFXlist.fx_hovered
-  local modkeys = mcap & MFXlist.MOD_KEYS
-  -- Msg("modkeys: "..modkeys)
-  if modkeys == 0 then -- simple click, show/hide floating window
+  if modkeys == 0 then 
+    -- simple click on FX, show/hide floating window for FX
     
-    local showhide = rpr.TrackFX_GetOpen(track, index-1) and 2 or 3
+    local showhide = rpr.TrackFX_GetOpen(track, index-1) and 2 or 3 -- 2 for hide floating win, 3 for show floating win
     rpr.TrackFX_Show(track, index-1, showhide)
     
+  elseif modkeys & (MFXlist.MOD_SHIFT | MFXlist.MOD_CTRL | MFXlist.MOD_ALT) == (MFXlist.MOD_SHIFT | MFXlist.MOD_CTRL | MFXlist.MOD_ALT) then
+      -- Shift+Alt
+      Msg("TODO! Left click over track FX with Shift+Ctrl+Alt key!")
+      return
+  elseif modkeys & (MFXlist.MOD_SHIFT | MFXlist.MOD_ALT) == (MFXlist.MOD_SHIFT | MFXlist.MOD_ALT) then
+      -- Shift+Alt
+      Msg("TODO! Left click over FX with Shift+Alt key!")
+      return
+  elseif modkeys & (MFXlist.MOD_SHIFT | MFXlist.MOD_CTRL) == (MFXlist.MOD_SHIFT | MFXlist.MOD_CTRL) then
+      -- Shift+Ctrl
+      Msg("TODO! Left click over FX with Shift+Ctrl key!")
+      return
   elseif modkeys & (MFXlist.MOD_CTRL | MFXlist.MOD_ALT) == (MFXlist.MOD_CTRL | MFXlist.MOD_ALT) then
+    -- Ctr+Alt+Left click on FX, toggle offline/online
     
     local isoffline = rpr.TrackFX_GetOffline(track, index-1)
     rpr.TrackFX_SetOffline(track, index-1, not isoffline)
-    
-  elseif modkeys & MFXlist.MOD_SHIFT == MFXlist.MOD_SHIFT then -- set/unset enabled
+    return
+  elseif modkeys & MFXlist.MOD_SHIFT == MFXlist.MOD_SHIFT then 
+    -- Shift+Left click on FX, toggle enable/disable
     
     local endisabled = not rpr.TrackFX_GetEnabled(track, index-1)
     rpr.TrackFX_SetEnabled(track, index-1, endisabled)
-    
+    return
   elseif modkeys & MFXlist.MOD_CTRL == MFXlist.MOD_CTRL then -- show/hide chain
+    -- Ctrl+Left click on FX, toggle track FX Chain window with FX selected
     
-    local openclose = rpr.TrackFX_GetOpen(track, index-1) and 0 or 1
+    local openclose = rpr.TrackFX_GetOpen(track, index-1) and 0 or 1 -- 0 for hide FX chain win, 1 for show FX chain win
     rpr.TrackFX_Show(track, index-1, openclose)
-    
+    return
   elseif modkeys & MFXlist.MOD_ALT == MFXlist.MOD_ALT then -- delete
+    -- Alt+Left click on FX, delete FX
     
     rpr.TrackFX_Delete(track, index-1)
-    
+    return
+  else
+    assert(nil, "handleLeftMB (2): should not get here!")
   end
   
 end -- handleLeftMB
@@ -775,21 +873,53 @@ local function handleMouse()
   end
   
   local wheel = gfx.mouse_wheel
-  if wheel ~= 0 then handleMousewheel(wheel, mx, my) end
+  if wheel ~= 0 then 
+    handleMousewheel(wheel, mx, my)
+    return true 
+  end
 
   local mcap = gfx.mouse_cap
   local mbldown = mcap & MFXlist.MB_LEFT
   local mbrdown = mcap & MFXlist.MB_RIGHT
   
-  -- is left mouse button clicked?
+  --[[
+  -- left mouse button down flank? (should really wait for up-flank to cater for drag, but not now)
   if mbldown == MFXlist.MB_LEFT and mblprev ~= MFXlist.MB_LEFT then
     mblprev = MFXlist.MB_LEFT
     handleLeftMB(mcap, mx, my)
   elseif mbldown ~= MFXlist.MB_LEFT and mblprev == MFXlist.MB_LEFT then
     mblprev = 0
   end
+  --]]
   
-  -- is right mouse button clicked?
+  --[ [
+  -- left mouse button up-flank, allows to drag 
+  if mbldown ~= MFXlist.MB_LEFT and mblprev == MFXlist.MB_LEFT then
+    mblprev = 0
+    if MFXlist.drag_startx - MFXlist.CLICK_RESOX <= mx and 
+      mx <= MFXlist.drag_startx + MFXlist.CLICK_RESOX and 
+      MFXlist.drag_starty - MFXlist.CLICK_RESOY <= my and 
+      my <= MFXlist.drag_starty + MFXlist.CLICK_RESOY then
+        
+        handleLeftMB(mcap, mx, my)
+        MFXlist.drag_startx, MFXlist.drag_starty = nil, nil
+        
+    else -- we are dragging, 
+      MFXlist.drag_object = {MFXlist.track_hovered, MFXlist.fx_hovered}
+      Msg("Dragging... start: ".."ystart "..MFXlist.drag_starty..".  yend: "..my)
+      local track = MFXlist.drag_object[1]
+      local fxid = MFXlist.drag_object[2]
+      local tname = rpr.GetTrackName(track)
+      local _, fxname = rpr.TrackFX_GetFXName(track, fxid, "")
+      Msg("Drag start: "..tname..", "..fxname)
+    end
+  elseif mbldown == MFXlist.MB_LEFT and mblprev ~= MFXlist.MB_LEFT then
+    mblprev = MFXlist.MB_LEFT -- possible drag start, need to store start pos
+    MFXlist.drag_startx, MFXlist.drag_starty = mx, my
+  end
+  --]]
+  
+  -- right mouse button down flank?
   if mbrdown == MFXlist.MB_RIGHT and mbrprev ~= MFXlist.MB_RIGHT then
     --local mx, my = gfx.mouse_x, gfx.mouse_y
     mbrprev = MFXlist.MB_RIGHT
@@ -810,13 +940,40 @@ end -- handleMouse
 -----------------------------
 -- Write EXSTATE info
 local function exitScript()
+  
+  local dockstate, wx, wy, ww, wh = gfx.dock(-1, wx, wy, ww, wh)  
+  local dockstr = string.format("%d", dockstate)
+  rpr.SetExtState(MFXlist.SCRIPT_NAME, "dock", dockstr, true)
+  
+  local coordstr = string.format("%d,%d,%d,%d", wx, wy, ww, wh)
+  rpr.SetExtState(MFXlist.SCRIPT_NAME, "coords", coordstr, true)
+  
+  rpr.SetExtState(MFXlist.SCRIPT_NAME, "version", MFXlist.SCRIPT_VERSION, true)
+  
   Msg("Bye, bye")
+  
 end -- exitScript
 ------------------------------------------------------------
 -- Read EXSTATE info and set up in previous docker (if any)
 local function openWindow()
+  
+  -- Dock state - not valid for Reaper v4 or earlier
+  local dockstate = MFXlist.LEFT_ARRANGEDOCKER
+  if rpr.HasExtState(MFXlist.SCRIPT_NAME, "dock") then 
+      local extstate = rpr.GetExtState(MFXlist.SCRIPT_NAME, "dock")
+      dockstate = tonumber(extstate)
+  end
+  local docker = dockstate
+  
+  local x, y, w, h = MFXlist.WIN_X, MFXlist.WIN_Y, MFXlist.WIN_W, MFXlist.WIN_H
+  if rpr.HasExtState(MFXlist.SCRIPT_NAME, "coords") then
+      local coordstr = rpr.GetExtState(MFXlist.SCRIPT_NAME, "coords")
+      x, y, w, h = coordstr:match("(%d+),(%d+),(%d+),(%d+)")
+  end
+  
   gfx.clear = MFXlist.COLOR_EMPTYSLOT[1] * 255 + MFXlist.COLOR_EMPTYSLOT[2] * 255 * 256 + MFXlist.COLOR_EMPTYSLOT[3] * 255 * 65536
-  gfx.init(MFXlist.SCRIPT_NAME, MFXlist.WIN_W, MFXlist.WIN_H, MFXlist.LEFT_ARRANGEDOCKER, MFXlist.WIN_X, MFXlist.WIN_Y)
+  gfx.init(MFXlist.SCRIPT_NAME, MFXlist.WIN_W, MFXlist.WIN_H, docker, MFXlist.WIN_X, MFXlist.WIN_Y)
+  
 end -- openWindow
 ------------------------------------------------ 
 local function initializeScript()
@@ -850,6 +1007,8 @@ local function initializeScript()
   
   -- Set up the header buffer for blitting -- cannot seem to get the blit of the header to work 
   gfx.dest = MFXlist.BLITBUF_HEAD
+  -- according to https://forum.cockos.com/showthread.php?t=204629, this piece is missing
+  gfx.setimgdim(MFXlist.BLITBUF_HEAD , -1 , -1);
   gfx.setimgdim(MFXlist.BLITBUF_HEAD, MFXlist.BLITBUF_HEADW, MFXlist.BLITBUF_HEADH) -- gfx.w, cy)
   gfx.clear = MFXlist.COLOR_EMPTYSLOT[1] * 255 + MFXlist.COLOR_EMPTYSLOT[2] * 255 * 256 + MFXlist.COLOR_EMPTYSLOT[3] * 255 * 256 * 256 -- will this clear gfx.dest?
   gfx.set(1, 1, 1, 0.7)
@@ -868,13 +1027,17 @@ local function mfxlistMain()
   _, MFXlist.TCP_top = gfx.screentoclient(x, y) -- top y coord to draw FX at, above this only header stuff
   MFXlist.TCP_bot = MFXlist.TCP_top + h
   
+  rpr.PreventUIRefresh(1)
+
   handleTracks()
-  if not handleMouse() then return end
-    
+  local continue = handleMouse() 
+  
+  rpr.PreventUIRefresh(-1)
+  rpr.TrackList_AdjustWindows(true)
+  rpr.UpdateArrange()
+  
   -- Check if we are to quit or not
-  local dstate = gfx.dock(-1)
-  if gfx.getchar() < 0 then --or dstate == MFXlist.LEFT_ARRANGEDOCKER then
-    Msg("dock state: "..dstate)
+  if gfx.getchar() < 0 or not continue then --or dstate == MFXlist.LEFT_ARRANGEDOCKER then
     gfx.quit()
     return
   end
