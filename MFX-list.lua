@@ -14,17 +14,23 @@
 --   # Developed using ZeroBrane Studio as IDE, https://studio.zerobrane.com/
 
 -- TODO! BIG THING! Have to give focus back to arrange view, otherwise spacebar does not play! WTF? 
--- TODO! There is some type of focus-steling going on. Click an FX, while its window is open, spacebar works as play
+--       There is some type of focus-steling going on. Click an FX, while its window is open, spacebar works as play
 --       But click again (on MFXlist) to close the floating window. Now spacebar does NOT play! WTF sorcery is this?
+--       Discussion on this here https://forum.cockos.com/showthread.php?t=161000, TL;DR: "SWS/BR: Focus arrange on mouse release"
+--       But there is also SWS/BR: Focus tracks, maybe that one is more suitable?
 -- TODO! Fix the scrolling, Mousewheel scroll over MFXlist sends message to TCP, but the arrange view is scrolled! 
 -- TODO! Ctrl+Mousewheel in track area does not work correctly
 -- TODO! Clicking in track area outside of any FX opens FX Chain window. Clicking again, should close it. How to? 
 -- TODO! Find left docker to attach to automatically? Manual positiono works and is saved, but...
 -- TODO! Allow drag of FX within and between track(s) rpr.TrackFX_CopyToTrack(src_track, src_fx, dest_track, dest_fx, bool is_move)
---       Note that this requires change to the handling of teh left MB, as it is now, down is interpreted as click
+--       Note that this requires change to the handling of the left MB, as it is now, down is interpreted as click
 -- Done! Track with FX chain disabled, looks no different from each FX disabled by itself (same as dopplist), but maybe should? How?
 -- TODO! Dragging, clicking, or just holding left MB down on header or footer should scroll, down for header, up for footer
--- TODO! Partially visible FX name inside track rectangle is not cropped correctly. floor was changed to ceil, but not good enough
+-- Done! Partially visible FX name inside track rectangle is not cropped correctly. floor was changed to ceil, but not good enough
+-- Done! Undo, definitely for Alt+leftclick, but also for drag-drop
+--       This turned out to be window focus issue, see GitHub Issue #5 (now closed)
+-- TODO! Open Add FX instead of FX Chain window on left click on empty slot. HAve no idea how to do that, though.
+
 -- POSS? Double-click... to do what? Nah, too much hassle, have to keep track of time in-between LMB up and down...
 
 local string, table, math, os, utf8 = string, table, math, os, utf8
@@ -73,7 +79,7 @@ local MFXlist =
   SCRIPT_VERSION = "v0.0.1",
   SCRIPT_NAME = "MFX-list",
   SCRIPT_AUTHORS = {"M Fabian"},
-  SCRIPT_YEAR = "2020",
+  SCRIPT_YEAR = "2020-2021",
   
   -- Mouse button and modifier key constants
   MB_LEFT = 1,
@@ -131,6 +137,10 @@ local MFXlist =
   TCP_bot = nil, -- Set on every defer before calling any other function
   
   CMD_SCROLLVERT = 989, -- View: Scroll vertically (MIDI CC relative/mousewheel)
+  CMD_FOCUSARRANGE = 0, -- SWS/BR: Focus arrange (_BR_FOCUS_ARRANGE_WND)
+  CMD_FOCUSTRACKS = 0,  -- SWS/BR: Focus tracks (_BR_FOCUS_TRACKS)
+  CMD_SCROLLTCPDOWN = 0,-- Xenakios/SWS: Scroll track view down (page)
+  CMD_SCROLLTCPUP = 0,  -- Xenakios/SWS: Scroll track view up (page)
   
   -- off-screen draw buffer for the header (coudl not get thsi to work, see drawHeader() below)
   BLITBUF_HEAD = 16, 
@@ -230,10 +240,11 @@ local function tprint (tbl, indent)
   toprint = toprint .. string.rep(" ", indent-2) .. "}"
   return toprint
 end
+-------------------------- Windows specific stuff here --------------------------------------------------------------
 -------------------------------------------------------- Stolen from https://forum.cockos.com/showthread.php?t=230919
 -- Requires js_ReaScriptAPI extension, 
 -- https://forum.cockos.com/showthread.php?t=212174
-local function GetClientBounds(hwnd)
+local function getClientBounds(hwnd)
   
   local ret, left, top, right, bottom = rpr.JS_Window_GetClientRect(hwnd)
   return left, top, right-left, bottom-top
@@ -278,12 +289,65 @@ local function getTCPProperties(classname)
 -- get first reaper child window with classname "REAPERTCPDisplay".
   local tcp_hwnd = FindChildByClass(rpr.GetMainHwnd(), classname, 1) 
   if tcp_hwnd then
-    local x,y,w,h = GetClientBounds(tcp_hwnd)
+    local x,y,w,h = getClientBounds(tcp_hwnd)
     --msg(w) -- show width
     return tcp_hwnd, x, y, w, h
   end
   return nil, -1, -1, -1, -1
 end
+--------------------------------------------------------------------
+local function sendTCPWheelMessage(mbkeys, wheel, screenx, screeny)
+  
+  local retval = rpr.JS_WindowMessage_Send(MFXlist.TCP_HWND, 
+      "WM_MOUSEWHEEL", 
+      mbkeys, -- wParam, mouse buttons and modifier keys
+      wheel, -- wParamHighWWord, wheel distance
+      screenx, screeny) -- lParam, lParamHighWord, need to fake it is over TCP?  
+  
+  return retval
+
+end -- sendTCPWheelMessage
+--------------------------------------------------------------------
+local function sendTCPScrollMessage(mbkeys, wheel, screenx, screeny)
+  
+  --local updown = wheel < 0 and SB_LINEDOWN or SB_LINEUP
+  --local retval = rpr.JS_WindowMessage_Send(MFXlist.TCP_HWND,    "WM_VSCROLL", SB_LINE...
+  
+  -- From here https://forum.cockos.com/showpost.php?p=2146483&postcount=564
+  local LVM_SCROLL = "0x1014"
+  rpr.JS_WindowMessage_Send(MFXlist.TCP_HWND, LVM_SCROLL, 0, 0, wheel, 0)
+  
+end
+---------------------------------------------- SWS specifc stuff go here
+local function initSWSCommands()
+  
+  MFXlist.CMD_FOCUSARRANGE = rpr.NamedCommandLookup("_BR_FOCUS_ARRANGE_WND")
+  MFXlist.CMD_FOCUSTRACKS = rpr.NamedCommandLookup("_BR_FOCUS_TRACKS")
+  MFXlist.CMD_SCROLLTCPDOWN = rpr.NamedCommandLookup("_XENAKIOS_TVPAGEDOWN")
+  MFXlist.CMD_SCROLLTCPUP = rpr.NamedCommandLookup("_XENAKIOS_TVPAGEUP")
+  
+end 
+-------------------------------------------------
+-- These scroll whole pages, I don't want that
+local function scrollTCPUp()
+  
+  rpr.Main_OnCommand(MFXlist.CMD_SCROLLTCPUP, 0)
+  
+end -- scrollTCPUp
+-------------------------------
+local function scrollTCPDown()
+  
+  rpr.Main_OnCommand(MFXlist.CMD_SCROLLTCPDOWN, 0)
+  
+end -- scrollTCPDown
+-----------------------------------------------
+-- Set the focus to TCP so keystrokes go there
+-- Called after (almost) every mouse click
+local function focusTCP()
+
+  rpr.Main_OnCommand(MFXlist.CMD_FOCUSTRACKS, 0)
+
+end -- focusTCP
 ----------------------------------------------------------------
 -- This doesn't work, I find no way to make sense of the docker
 local function findLeftDock()
@@ -516,7 +580,7 @@ end -- getLastTCPTrackLinear
 -- 2. have visibility property turned off
 local function collectVisibleTracks()
   
-  local _, _, _, h = GetClientBounds(MFXlist.TCP_HWND)
+  local _, _, _, h = getClientBounds(MFXlist.TCP_HWND)
   
   local _, findex = getFirstTCPTrackBinary()
   local _, lindex = getLastTCPTrackBinary(h)
@@ -602,7 +666,8 @@ local function handleTracks()
     local trinfo = vistracks[i]
     local posy = trinfo.posy
     local height = trinfo.height
-    local tenabled = trinfo.enabled -- track FX chain enabled
+    local chainon = trinfo.enabled -- track FX chain enabled
+    -- if the mouse is currently inside this track rect
     if MFXlist.mouse_y and posy <= MFXlist.mouse_y-drawy and MFXlist.mouse_y-drawy <= posy + height then
       MFXlist.footer_text = trinfo.name
       insidetrack = true -- send message to FX part of code, see below
@@ -610,19 +675,16 @@ local function handleTracks()
     end
     -- Draw bounding box for track FX
     gfx.a = MFXlist.FX_OFFLINEDA -- bounding box is always drawn faint
-    if not tenabled then
-      gfx.rect(0, drawy + posy, gfx.w, height, 1)
-    else
-      gfx.rect(0, drawy + posy, gfx.w, height, 0) -- rect around the slots for this track
-    end
+    gfx.rect(0, drawy + posy, gfx.w, height, (chainon and 0 or 1)) -- abled chain is not filled with faint color
     -- Calc the number of FX slots to draw, and draw them
     local fxlist = trinfo.fx
     local numfxs = math.ceil(height / MFXlist.SLOT_HEIGHT) -- max num FX to show 
     local count = math.min(#fxlist, numfxs)
+    local cropy = drawy+posy+height-1 -- crop FX name slot to this
     gfx.x, gfx.y = 0, drawy + posy  -- drawing FX names start at this position
     for i = 1, count do
       local fx = fxlist[i]
-      gfx.a = (fx.enabled and not fx.offlined and tenabled) and 1 or MFXlist.FX_DISABLEDA -- disabled FX are shown faint
+      gfx.a = (fx.enabled and not fx.offlined and chainon) and 1 or MFXlist.FX_DISABLEDA -- disabled FX are shown faint
       -- if mouse hovers over this FX, draw it in different color
       if insidetrack and gfx.y <= MFXlist.mouse_y and MFXlist.mouse_y < gfx.y + MFXlist.SLOT_HEIGHT then
         gfx.set(MFXlist.COLOR_FXHOVERED[1], MFXlist.COLOR_FXHOVERED[2], MFXlist.COLOR_FXHOVERED[3], gfx.a)
@@ -634,9 +696,9 @@ local function handleTracks()
         gfx.set(1, 1, 1, gfx.a)
       end
       gfx.x = 0
-      local corner = math.min(gfx.y + MFXlist.SLOT_HEIGHT, drawy+posy+height-1) -- make sure to crop within the bounding track rect
+      local corner = math.min(gfx.y + MFXlist.SLOT_HEIGHT, cropy) -- make sure to crop within the bounding track rect
       gfx.drawstr(fx.fxname, 1, gfx.w, corner) 
-      if fx.offlined then
+      if fx.offlined then -- strikeout offlined FX
         local w, h = gfx.measurestr(fx.name)
         local y = gfx.y+ MFXlist.SLOT_HEIGHT/2
         gfx.line((gfx.w-w)/2, y, (gfx.w+w)/2, y, gfx.a)
@@ -684,14 +746,14 @@ local function handleMenu(mcap, mx, my)
     local endt = rpr.time_precise()
     Msg("First visible track: "..idx.." ("..endt-startt..")")
   elseif ret == MFXlist.MENU_SHOWLASTTCP then
-    local _, _, _, h = GetClientBounds(MFXlist.TCP_HWND)
+    local _, _, _, h = getClientBounds(MFXlist.TCP_HWND)
     local startt = rpr.time_precise()
     local track, idx = getLastTCPTrackBinary(h)
     local endt = rpr.time_precise()
     Msg("Last visible track (bin): "..idx.." ("..endt-startt..")")
   elseif ret == MFXlist.MENU_LINEARFINDLAST then
     local ftrack, fidx = getFirstTCPTrackBinary()
-    local _, _, _, h = GetClientBounds(MFXlist.TCP_HWND)
+    local _, _, _, h = getClientBounds(MFXlist.TCP_HWND)
     local startt = rpr.time_precise()
     local ltrack, lidx = getLastTCPTrackLinear(h, fidx)
     local endt = rpr.time_precise()
@@ -726,7 +788,7 @@ local function handleMousewheel(wheel, mx, my)
   --mx = gfx.w + 7 -- 7 pixels into the TCP area should be enough
   local screenx, screeny = gfx.clienttoscreen(mx, my) 
   --screenx = screenx + 7
-  -- There does not seem tyo be much difference whethetr I do one or the other... or none
+  -- There does not seem to be much difference whethetr I do one or the other... or none
   
   -- There is an issue with passing mousewheel without mod keys on to the TCP
   -- The message does not affect the TCP, instead the arrange view zooms
@@ -734,25 +796,36 @@ local function handleMousewheel(wheel, mx, my)
     -- Msg("CMD_SCROLLVERT, mx: "..mx..", screenx: "..screenx)
     -- rpr.Main_OnCommand(MFXlist.CMD_SCROLLVERT, 0) -- This does not work! Why?
     
+    --sendTCPScrollMessage(mbkeys, wheel, screenx, screeny)
+    --[[
+    -- Uses SWS, works but scrolls too much
+    Msg("handleMouseWheel (1), mbkeys: "..mbkeys..", wheel: "..wheel)
+    if wheel < 0 then
+      scrollTCPDown()
+    else
+      scrollTCPUp()
+    end
+    --]]
+    --[ [
     -- Instead, for plain Mousewheel, we send Ctr+Alt+Mousewheel, but this STILL
     -- does not scroll the TCP, but zooms the arrange view horizontally
     local mbkeys = 0x18 -- Ctrl + Alt (?)
-       local retval = rpr.JS_WindowMessage_Send(MFXlist.TCP_HWND, 
-      "WM_MOUSEWHEEL", 
-      mbkeys, -- wParam, mouse buttons amd modifier keys
-      wheel, -- wParamHighWWord, wheel distance
-      screenx, screeny) -- lParam, lParamHighWord, need to fake it is over TCP?    
-  else
+    Msg("handleMousewheel (1), mbkeys: "..mbkeys..", wheel: "..wheel)
+    -- focusTCP() -- does not help
+    sendTCPWheelMessage(mbkeys, wheel, screenx, screeny)
+    --]]
+  else -- For (some) modifier keys this works fine
+    
     local mbkeys = swapCtrlShft(gfx.mouse_cap)
-    --Msg("mouse_cap: "..gfx.mouse_cap..", mbkeys: "..mbkeys)
-       local retval = rpr.JS_WindowMessage_Send(MFXlist.TCP_HWND, 
-      "WM_MOUSEWHEEL", 
-      mbkeys, -- wParam, mouse buttons amd modifier keys
-      wheel, -- wParamHighWWord, wheel distance
-      screenx, screeny) -- lParam, lParamHighWord, need to fake it is over TCP?
+    Msg("handleMouseWheel (2), mbkeys: "..mbkeys..", wheel: "..wheel)
+    sendTCPWheelMessage(mbkeys, wheel, screenx, screeny)
+    
   end
-  
+
   gfx.mouse_wheel = 0
+  --focusTCP() -- After this modifier keys are no longer passed to the script
+                -- And if this is not here, no keys get passed to the TCP or arrange
+  -- So it seems that I cannot handle mouse wheel with modifier keys
   
 end -- handleMousewheel
 ------------------------------
@@ -764,45 +837,62 @@ local function handleLeftMB(mcap, mx, my)
   
   if not track then -- we clicked oustide track area, header or footer
     
-    Msg("TODO! Left click over header or footer. What to do?")    
+    Msg("TODO! Left click over header or footer. What to do?")
+    focusTCP()
     return
     
   elseif not MFXlist.fx_hovered then -- so we hover over track but not any fx
-    -- Left click inside track rect but not on FX
+    -- Left click inside track rect but not on FX, empty slot
     if modkeys == 0 then
       -- No modifier key, toggle FX Chain window (would want to open Add FX dialog, but how?)
-      local count = rpr.TrackFX_GetCount(track)
-      local openclose = rpr.TrackFX_GetOpen(track, count) and 0 or 1 
-      rpr.TrackFX_Show(track, count, openclose) -- does not work to toggle?
+      local count = rpr.TrackFX_GetCount(track) - 1
+      if count < 0 then -- this case needs specal treatment
+        Msg("TODO! Empty slot clicked on track with zero FX")
+        focusTCP()
+      else -- if FX Chain is not empty, toggling works
+        local openclose = rpr.TrackFX_GetOpen(track, count) and 0 or 1 
+        Msg("Left click over track empty slot, count: "..count..", openclose: "..openclose)
+        rpr.TrackFX_Show(track, count, openclose) -- does not work to toggle?
+        if openclose == 0 then -- we just closed and need to focus
+          focusTCP()
+        end
+      end
       return
-    -- Note that modfier key check must come in this order. Reaper ha sthat wrong in many cases
+    -- Note that modfier key check must come in this order. Reaper has that wrong in many cases
     elseif modkeys & (MFXlist.MOD_SHIFT | MFXlist.MOD_CTRL | MFXlist.MOD_ALT) == (MFXlist.MOD_SHIFT | MFXlist.MOD_CTRL | MFXlist.MOD_ALT) then
       -- Shift+Ctrl+Alt
-      Msg("TODO! Left click over track empty area with Shift+Ctrl+Alt key!")
+      Msg("TODO! Left click over track empty slot with Shift+Ctrl+Alt key!")
+      focusTCP()
       return
     elseif modkeys & (MFXlist.MOD_SHIFT | MFXlist.MOD_ALT) == (MFXlist.MOD_SHIFT | MFXlist.MOD_ALT) then
       -- Shift+Alt
-      Msg("TODO! Left click over track empty area with Shift+Alt key!")
+      Msg("TODO! Left click over track empty slot with Shift+Alt key!")
+      focusTCP()
       return
     elseif modkeys & (MFXlist.MOD_SHIFT | MFXlist.MOD_CTRL) == (MFXlist.MOD_SHIFT | MFXlist.MOD_CTRL) then
       -- Shift+Ctrl
-      Msg("TODO! Left click over track empty area with Shift+Ctrl key!")
+      Msg("TODO! Left click over track empty slot with Shift+Ctrl key!")
+      focusTCP()
       return
     elseif modkeys & (MFXlist.MOD_CTRL | MFXlist.MOD_ALT) == (MFXlist.MOD_CTRL | MFXlist.MOD_ALT) then
       -- Ctrl+Alt
-      Msg("TODO! Left click over track empty area with Ctrl+Alt key!")
+      Msg("TODO! Left click over track empty slot with Ctrl+Alt key!")
+      focusTCP()
       return
     elseif modkeys & MFXlist.MOD_SHIFT == MFXlist.MOD_SHIFT then 
       -- Shift key
-      Msg("TODO! Left click over track empty area with Shift key!")
+      Msg("TODO! Left click over track empty slot with Shift key!")
+      focusTCP()
       return
     elseif modkeys & MFXlist.MOD_CTRL == MFXlist.MOD_CTRL then
       -- Ctrl key
-      Msg("TODO! Left click over track empty area with Ctrl key!")
+      Msg("TODO! Left click over track empty slot with Ctrl key!")
+      focusTCP()
       return
     elseif modkeys & MFXlist.MOD_ALT == MFXlist.MOD_ALT then
       -- Alt key
-      Msg("TODO! Left click over track empty area with Alt key!")
+      Msg("TODO! Left click over track empty slot with Alt key!")
+      focusTCP()
       return
     else
       assert(nil, "handleLeftMB (1): should not get here!")
@@ -815,42 +905,70 @@ local function handleLeftMB(mcap, mx, my)
     
     local showhide = rpr.TrackFX_GetOpen(track, index-1) and 2 or 3 -- 2 for hide floating win, 3 for show floating win
     rpr.TrackFX_Show(track, index-1, showhide)
+    -- Set focus to TCP, but only on hide since on open the just opened window should have focus
+    if showhide == 2 then
+      focusTCP()
+    end
+    return
     
   elseif modkeys & (MFXlist.MOD_SHIFT | MFXlist.MOD_CTRL | MFXlist.MOD_ALT) == (MFXlist.MOD_SHIFT | MFXlist.MOD_CTRL | MFXlist.MOD_ALT) then
-      -- Shift+Alt
-      Msg("TODO! Left click over track FX with Shift+Ctrl+Alt key!")
-      return
+    -- Shift+Alt
+    Msg("TODO! Left click over track FX with Shift+Ctrl+Alt key!")
+    -- Set focus to TCP so key strokes go there
+    focusTCP()
+    return
+    
   elseif modkeys & (MFXlist.MOD_SHIFT | MFXlist.MOD_ALT) == (MFXlist.MOD_SHIFT | MFXlist.MOD_ALT) then
-      -- Shift+Alt
-      Msg("TODO! Left click over FX with Shift+Alt key!")
-      return
+    -- Shift+Alt
+    Msg("TODO! Left click over FX with Shift+Alt key!")
+    -- Set focus to TCP so key strokes go there
+    focusTCP()
+    return
+    
   elseif modkeys & (MFXlist.MOD_SHIFT | MFXlist.MOD_CTRL) == (MFXlist.MOD_SHIFT | MFXlist.MOD_CTRL) then
-      -- Shift+Ctrl
-      Msg("TODO! Left click over FX with Shift+Ctrl key!")
-      return
+    -- Shift+Ctrl
+    Msg("TODO! Left click over FX with Shift+Ctrl key!")
+    -- Set focus to TCP so key strokes go there
+    focusTCP()
+    return
+    
   elseif modkeys & (MFXlist.MOD_CTRL | MFXlist.MOD_ALT) == (MFXlist.MOD_CTRL | MFXlist.MOD_ALT) then
     -- Ctr+Alt+Left click on FX, toggle offline/online
     
     local isoffline = rpr.TrackFX_GetOffline(track, index-1)
     rpr.TrackFX_SetOffline(track, index-1, not isoffline)
+    -- Set focus to TCP so key strokes go there
+    fcousTCP()
     return
+    
   elseif modkeys & MFXlist.MOD_SHIFT == MFXlist.MOD_SHIFT then 
     -- Shift+Left click on FX, toggle enable/disable
     
     local endisabled = not rpr.TrackFX_GetEnabled(track, index-1)
     rpr.TrackFX_SetEnabled(track, index-1, endisabled)
+    -- Set focus to TCP so key strokes go there
+    focusTCP()
     return
+    
   elseif modkeys & MFXlist.MOD_CTRL == MFXlist.MOD_CTRL then -- show/hide chain
     -- Ctrl+Left click on FX, toggle track FX Chain window with FX selected
     
     local openclose = rpr.TrackFX_GetOpen(track, index-1) and 0 or 1 -- 0 for hide FX chain win, 1 for show FX chain win
     rpr.TrackFX_Show(track, index-1, openclose)
+    -- Set focus to the TCP, but only on close, as after open the just opened win should have focus
+    if openclose == 0 then 
+      focusTCP()
+    end
     return
+    
   elseif modkeys & MFXlist.MOD_ALT == MFXlist.MOD_ALT then -- delete
     -- Alt+Left click on FX, delete FX
     
     rpr.TrackFX_Delete(track, index-1)
+    -- Set focus to TCP so key strokes go there
+    focusTCP()
     return
+    
   else
     assert(nil, "handleLeftMB (2): should not get here!")
   end
@@ -988,6 +1106,8 @@ local function initializeScript()
   
   -- findLeftDock() -- doesnt work (yet)
   
+  initSWSCommands()
+  
   rpr.atexit(exitScript)
   openWindow()
   
@@ -1031,7 +1151,7 @@ end -- initializeScript
 ------------------------------------------------ Here is the main loop
 local function mfxlistMain()
   
-  local x, y, w, h = GetClientBounds(MFXlist.TCP_HWND)
+  local x, y, w, h = getClientBounds(MFXlist.TCP_HWND)
   _, MFXlist.TCP_top = gfx.screentoclient(x, y) -- top y coord to draw FX at, above this only header stuff
   MFXlist.TCP_bot = MFXlist.TCP_top + h
   
@@ -1050,6 +1170,9 @@ local function mfxlistMain()
     return
   end
 
+  -- set focus to TCP. Seems to work, but...
+  -- Cannot have it here, it messes up other windows focus, such as Action window!
+  -- rpr.Main_OnCommand(MFXlist.CMD_FOCUSTRACKS, 0) 
   rpr.defer(mfxlistMain)
   
 end -- mfxlistMain
