@@ -13,14 +13,18 @@
 --   #         Julian Sander, https://forum.cockos.com/showthread.php?t=212174
 --   # Developed using ZeroBrane Studio as IDE, https://studio.zerobrane.com/
 
--- TODO! BIG THING! Have to give focus back to arrange view, otherwise spacebar does not play! WTF? 
+-- Done! BIG THING! Have to give focus back to arrange view, otherwise spacebar does not play! WTF? 
 --       There is some type of focus-steling going on. Click an FX, while its window is open, spacebar works as play
 --       But click again (on MFXlist) to close the floating window. Now spacebar does NOT play! WTF sorcery is this?
 --       Discussion on this here https://forum.cockos.com/showthread.php?t=161000, TL;DR: "SWS/BR: Focus arrange on mouse release"
 --       But there is also SWS/BR: Focus tracks, maybe that one is more suitable?
+--     * This is now done, except for the scrolling issue
 -- TODO! Fix the scrolling, Mousewheel scroll over MFXlist sends message to TCP, but the arrange view is scrolled! 
 -- TODO! Ctrl+Mousewheel in track area does not work correctly
 -- TODO! Clicking in track area outside of any FX opens FX Chain window. Clicking again, should close it. How to? 
+--       This is a problem for empty FX chains
+-- TODO! Open Add FX instead of FX Chain window on left click on empty slot. Have no idea how to do that, though.
+--       Also, only clicking on empty slot (right below last FX) should open Add FX, no?
 -- TODO! Find left docker to attach to automatically? Manual positiono works and is saved, but...
 -- TODO! Allow drag of FX within and between track(s) rpr.TrackFX_CopyToTrack(src_track, src_fx, dest_track, dest_fx, bool is_move)
 --       Note that this requires change to the handling of the left MB, as it is now, down is interpreted as click
@@ -29,7 +33,7 @@
 -- Done! Partially visible FX name inside track rectangle is not cropped correctly. floor was changed to ceil, but not good enough
 -- Done! Undo, definitely for Alt+leftclick, but also for drag-drop
 --       This turned out to be window focus issue, see GitHub Issue #5 (now closed)
--- TODO! Open Add FX instead of FX Chain window on left click on empty slot. HAve no idea how to do that, though.
+-- TODO! Measure time between mouse wheel to give focus to TCP when no mouse wheel for a certain time
 
 -- POSS? Double-click... to do what? Nah, too much hassle, have to keep track of time in-between LMB up and down...
 
@@ -136,7 +140,12 @@ local MFXlist =
   TCP_top = nil, -- Set on every defer before calling any other function
   TCP_bot = nil, -- Set on every defer before calling any other function
   
-  CMD_SCROLLVERT = 989, -- View: Scroll vertically (MIDI CC relative/mousewheel)
+  MFX_HWND = nil, -- this is our own window, need this to make mousewheel work
+  
+  ACT_SCROLLVERT = 989, -- View: Scroll vertically (MIDI CC relative/mousewheel)
+  ACT_SCROLLVIEWDOWN = 40139, -- View: Scroll view down
+  ACT_SCROLLVIEWUP = 40138, -- View: Scroll view up
+  
   CMD_FOCUSARRANGE = 0, -- SWS/BR: Focus arrange (_BR_FOCUS_ARRANGE_WND)
   CMD_FOCUSTRACKS = 0,  -- SWS/BR: Focus tracks (_BR_FOCUS_TRACKS)
   CMD_SCROLLTCPDOWN = 0,-- Xenakios/SWS: Scroll track view down (page)
@@ -285,9 +294,9 @@ local function FindChildByClass(hwnd, classname, occurrence)
 end --FindChildByClass
 ---------------------------------------------------------
 -- Returns the HWND and the screen coordinates of the TCP
-local function getTCPProperties(classname)
+local function getTCPProperties()
 -- get first reaper child window with classname "REAPERTCPDisplay".
-  local tcp_hwnd = FindChildByClass(rpr.GetMainHwnd(), classname, 1) 
+  local tcp_hwnd = FindChildByClass(rpr.GetMainHwnd(), MFXlist.CLASS_TCPDISPLAY, 1) 
   if tcp_hwnd then
     local x,y,w,h = getClientBounds(tcp_hwnd)
     --msg(w) -- show width
@@ -310,12 +319,15 @@ end -- sendTCPWheelMessage
 --------------------------------------------------------------------
 local function sendTCPScrollMessage(mbkeys, wheel, screenx, screeny)
   
-  --local updown = wheel < 0 and SB_LINEDOWN or SB_LINEUP
-  --local retval = rpr.JS_WindowMessage_Send(MFXlist.TCP_HWND,    "WM_VSCROLL", SB_LINE...
+  -- From swell-types.h: 
+  local SB_LINEUP, SB_LINEDOWN = 0, 1
+  local updown = wheel < 0 and SB_LINEDOWN or SB_LINEUP
+  local retval = rpr.JS_WindowMessage_Send(MFXlist.TCP_HWND, "WM_VSCROLL", updown, 0, 0, 0)
   
+  -- Could not get this to work
   -- From here https://forum.cockos.com/showpost.php?p=2146483&postcount=564
-  local LVM_SCROLL = "0x1014"
-  rpr.JS_WindowMessage_Send(MFXlist.TCP_HWND, LVM_SCROLL, 0, 0, wheel, 0)
+  -- local LVM_SCROLL = "0x1014"
+  -- rpr.JS_WindowMessage_Send(MFXlist.TCP_HWND, LVM_SCROLL, 0, 0, wheel, 0)
   
 end
 ---------------------------------------------- SWS specifc stuff go here
@@ -323,7 +335,7 @@ local function initSWSCommands()
   
   MFXlist.CMD_FOCUSARRANGE = rpr.NamedCommandLookup("_BR_FOCUS_ARRANGE_WND")
   MFXlist.CMD_FOCUSTRACKS = rpr.NamedCommandLookup("_BR_FOCUS_TRACKS")
-  MFXlist.CMD_SCROLLTCPDOWN = rpr.NamedCommandLookup("_XENAKIOS_TVPAGEDOWN")
+  MFXlist.CMD_SCROLLTCPDOWN = rpr.NamedCommandLookup("_XENAKIOS_TVPAGEDOWN") -- scrolls TCP, but too much
   MFXlist.CMD_SCROLLTCPUP = rpr.NamedCommandLookup("_XENAKIOS_TVPAGEUP")
   
 end 
@@ -345,9 +357,15 @@ end -- scrollTCPDown
 -- Called after (almost) every mouse click
 local function focusTCP()
 
-  rpr.Main_OnCommand(MFXlist.CMD_FOCUSTRACKS, 0)
+  -- rpr.Main_OnCommand(MFXlist.CMD_FOCUSTRACKS, 0) -- SWS
+  rpr.JS_Window_SetFocus(MFXlist.TCP_HWND)
 
 end -- focusTCP
+local function focusMFX()
+  
+  rpr.JS_Window_SetFocus(MFXlist.MFX_HWND)
+  
+end -- focusMFX
 ----------------------------------------------------------------
 -- This doesn't work, I find no way to make sense of the docker
 local function findLeftDock()
@@ -783,40 +801,31 @@ end -- swapCtrlShft
 -- bit indx  0    1     2    3    4    5     6
 local function handleMousewheel(wheel, mx, my)
   
+  if wheel == 0 then return end -- no wheeling, nothing to do
+  
+  focusMFX()
+  
   -- put mx slightly to the right of our own track draw area
   -- to enter into the TCP area
-  --mx = gfx.w + 7 -- 7 pixels into the TCP area should be enough
+  -- mx = gfx.w + 7 -- 7 pixels into the TCP area should be enough
   local screenx, screeny = gfx.clienttoscreen(mx, my) 
-  --screenx = screenx + 7
+  -- screenx = screenx + 7
   -- There does not seem to be much difference whethetr I do one or the other... or none
   
   -- There is an issue with passing mousewheel without mod keys on to the TCP
   -- The message does not affect the TCP, instead the arrange view zooms
+  -- So, we use Main_OnCommand actions instead
   if gfx.mouse_cap == 0 then
-    -- Msg("CMD_SCROLLVERT, mx: "..mx..", screenx: "..screenx)
-    -- rpr.Main_OnCommand(MFXlist.CMD_SCROLLVERT, 0) -- This does not work! Why?
     
-    --sendTCPScrollMessage(mbkeys, wheel, screenx, screeny)
-    --[[
-    -- Uses SWS, works but scrolls too much
-    Msg("handleMouseWheel (1), mbkeys: "..mbkeys..", wheel: "..wheel)
     if wheel < 0 then
-      scrollTCPDown()
+      rpr.Main_OnCommand(MFXlist.ACT_SCROLLVIEWDOWN, 0)
     else
-      scrollTCPUp()
+      rpr.Main_OnCommand(MFXlist.ACT_SCROLLVIEWUP, 0)
     end
-    --]]
-    --[ [
-    -- Instead, for plain Mousewheel, we send Ctr+Alt+Mousewheel, but this STILL
-    -- does not scroll the TCP, but zooms the arrange view horizontally
-    local mbkeys = 0x18 -- Ctrl + Alt (?)
-    Msg("handleMousewheel (1), mbkeys: "..mbkeys..", wheel: "..wheel)
-    -- focusTCP() -- does not help
-    sendTCPWheelMessage(mbkeys, wheel, screenx, screeny)
-    --]]
+    
   else -- For (some) modifier keys this works fine
     
-    local mbkeys = swapCtrlShft(gfx.mouse_cap)
+    local mbkeys = gfx.mouse_cap--swapCtrlShft(gfx.mouse_cap)
     Msg("handleMouseWheel (2), mbkeys: "..mbkeys..", wheel: "..wheel)
     sendTCPWheelMessage(mbkeys, wheel, screenx, screeny)
     
@@ -826,6 +835,7 @@ local function handleMousewheel(wheel, mx, my)
   --focusTCP() -- After this modifier keys are no longer passed to the script
                 -- And if this is not here, no keys get passed to the TCP or arrange
   -- So it seems that I cannot handle mouse wheel with modifier keys
+  --focusMFX()
   
 end -- handleMousewheel
 ------------------------------
@@ -1090,7 +1100,7 @@ local function openWindow()
   end
   local docker = dockstate
   
-  -- local x, y, w, h = MFXlist.WIN_X, MFXlist.WIN_Y, MFXlist.WIN_W, MFXlist.WIN_H
+  -- If we are docked, these coords don't really matter, but still...
   if rpr.HasExtState(MFXlist.SCRIPT_NAME, "coords") then
       local coordstr = rpr.GetExtState(MFXlist.SCRIPT_NAME, "coords")
       local x, y, w, h = coordstr:match("(%d+),(%d+),(%d+),(%d+)")
@@ -1104,27 +1114,14 @@ end -- openWindow
 ------------------------------------------------ 
 local function initializeScript()
   
-  -- findLeftDock() -- doesnt work (yet)
-  
-  initSWSCommands()
-  
-  rpr.atexit(exitScript)
-  openWindow()
-  
-  MFXlist.header_text = MFXlist.SCRIPT_NAME.." "..MFXlist.SCRIPT_VERSION
-  
-  gfx.setfont(MFXlist.FONT_FXNAME, MFXlist.FONT_NAME1, MFXlist.FONT_SIZE1)
-  gfx.setfont(MFXlist.FONT_FXBOLD, MFXlist.FONT_NAME1, MFXlist.FONT_SIZE1, MFXlist.FONT_BOLDFLAG)
-  gfx.setfont(MFXlist.FONT_HEADER, MFXlist.FONT_NAME2, MFXlist.FONT_SIZE2)
-  
-  local hwnd, x, y, w, h = getTCPProperties(MFXlist.CLASS_TCPDISPLAY) -- screen coordinates
+  local hwnd, x, y, w, h = getTCPProperties() -- TCP screen coordinates
   assert(hwnd, "Could not get TCP HWND, cannot do much now, sorry")
   MFXlist.TCP_HWND = hwnd
   
   local cx, cy = gfx.screentoclient(x, y)
   MFXlist.TCP_top = cy
   MFXlist.TCP_bot = MFXlist.TCP_top + h
-    
+  
   gfx.line(0, cy, gfx.w, cy) -- line on level with TCP top (do not draw FX above this)
   gfx.line(0, cy + h, gfx.w, cy + h) -- line on level with TCP bottom (do not draw FX below this)
   Msg("Dock: "..gfx.dock(-1)..", gfx.w: "..gfx.w..", gfx.h: "..gfx.h)
@@ -1132,6 +1129,24 @@ local function initializeScript()
   Msg("MFXlist header: 0, 0, "..gfx.w..", "..MFXlist.TCP_top) 
   Msg("MFXlist drawing area: 0, "..MFXlist.TCP_top..", "..gfx.w..", "..MFXlist.TCP_bot - MFXlist.TCP_top)
   Msg("MFXlist footer: 0, "..MFXlist.TCP_bot..", "..gfx.w..", "..gfx.h - MFXlist.TCP_bot)
+  
+  -- findLeftDock() -- doesnt work (yet)
+  
+  initSWSCommands()
+  
+  rpr.atexit(exitScript)
+  openWindow()
+  
+  MFXlist.MFX_HWND = rpr.JS_Window_GetFocus() -- I'm assuming we have the focus now
+  --local foregraound = rpr.JS_Window_GetForeground() -- and that we are at the foreground
+  --assert(foregraound == MFXlist.MFX_HWND, "Something is amiss, either I'm not focused or I'm not foreground")
+
+  
+  MFXlist.header_text = MFXlist.SCRIPT_NAME.." "..MFXlist.SCRIPT_VERSION
+  
+  gfx.setfont(MFXlist.FONT_FXNAME, MFXlist.FONT_NAME1, MFXlist.FONT_SIZE1)
+  gfx.setfont(MFXlist.FONT_FXBOLD, MFXlist.FONT_NAME1, MFXlist.FONT_SIZE1, MFXlist.FONT_BOLDFLAG)
+  gfx.setfont(MFXlist.FONT_HEADER, MFXlist.FONT_NAME2, MFXlist.FONT_SIZE2)
   
   -- Set up the header buffer for blitting -- cannot seem to get the blit of the header to work 
   gfx.dest = MFXlist.BLITBUF_HEAD
@@ -1151,9 +1166,9 @@ end -- initializeScript
 ------------------------------------------------ Here is the main loop
 local function mfxlistMain()
   
-  local x, y, w, h = getClientBounds(MFXlist.TCP_HWND)
+  local x, y, w, h = getClientBounds(MFXlist.TCP_HWND) -- screen coords of the TCP 
   _, MFXlist.TCP_top = gfx.screentoclient(x, y) -- top y coord to draw FX at, above this only header stuff
-  MFXlist.TCP_bot = MFXlist.TCP_top + h
+  MFXlist.TCP_bot = MFXlist.TCP_top + h -- bottom y coord to draw FX at, below this only footer stuff
   
   rpr.PreventUIRefresh(1)
 
@@ -1165,14 +1180,14 @@ local function mfxlistMain()
   rpr.UpdateArrange()
   
   -- Check if we are to quit or not
-  if gfx.getchar() < 0 or not continue then --or dstate == MFXlist.LEFT_ARRANGEDOCKER then
+  if gfx.getchar() < 0 or not continue then 
     gfx.quit()
     return
   end
 
   -- set focus to TCP. Seems to work, but...
   -- Cannot have it here, it messes up other windows focus, such as Action window!
-  -- rpr.Main_OnCommand(MFXlist.CMD_FOCUSTRACKS, 0) 
+  -- focusTCP()
   rpr.defer(mfxlistMain)
   
 end -- mfxlistMain

@@ -494,10 +494,14 @@ local function Routing(msy, mly, mop, route, locate)
             end          
         elseif ratd.ctrl or ratd.left or mop == 11 then 
             if not srcC or not srcS or conf.ctrls ~= "!" or not st.ctrls or mop == 11 then 
-                reaper.Main_OnCommandEx(40297, 0, 0); reaper.SetTrackSelected(reaper.CSurf_TrackFromID(0, false), false)
+              
+                reaper.Main_OnCommandEx(40297, 0, 0); -- Track: Unselect all tracks
+                reaper.SetTrackSelected(reaper.CSurf_TrackFromID(0, false), false)
                 reaper.SetMediaTrackInfo_Value(srcT, "I_SELECTED", 1)
-                reaper.Main_OnCommandEx(40293, 0, 0)
-            elseif srcC > -2 and srcS > -1 and conf.ctrls == "!" and st.ctrls then reaper.DP_tOpenControls(srcT, srcC, srcS) end -- needs "Fira Mono Medium" font
+                reaper.Main_OnCommandEx(40293, 0, 0) -- Track: View routing and I/O for current/last touched track
+                
+            elseif srcC > -2 and srcS > -1 and conf.ctrls == "!" and st.ctrls then 
+              reaper.DP_tOpenControls(srcT, srcC, srcS) end -- needs "Fira Mono Medium" font
         end 
         if not srcS then return end 
         if mop == 3 and srcC < 1 and #bufr == 0 and #buto == 0 then SwitchER(route, 2, srcT, srcC, srcS)
