@@ -18,12 +18,12 @@
 --       But click again (on MFXlist) to close the floating window. Now spacebar does NOT play! WTF sorcery is this?
 --       Discussion on this here https://forum.cockos.com/showthread.php?t=161000, TL;DR: "SWS/BR: Focus arrange on mouse release"
 --       But there is also SWS/BR: Focus tracks, maybe that one is more suitable?
---     * This is now done, except for the scrolling issue
--- TODO! Fix the scrolling, Mousewheel scroll over MFXlist sends message to TCP, but the arrange view is scrolled! 
--- TODO! Ctrl+Mousewheel in track area does not work correctly
+--     * This is now done, except for the mouse wheel issue (see below)
+-- Done! Fix the scrolling, Mousewheel scroll over MFXlist sends message to TCP, but the arrange view is scrolled! 
+-- TODO! Ctrl+Mousewheel in track area does not work the same way as Ctrl+Mousewheel over TCP
 -- TODO! Clicking in track area outside of any FX opens FX Chain window. Clicking again, should close it. How to? 
 --       This is a problem for empty FX chains
--- TODO! Open Add FX instead of FX Chain window on left click on empty slot. Have no idea how to do that, though.
+-- TODO! Open Add FX dialog instead of FX Chain window on left click on empty slot. Have no idea how to do that, though.
 --       Also, only clicking on empty slot (right below last FX) should open Add FX, no?
 -- TODO! Find left docker to attach to automatically? Manual positiono works and is saved, but...
 -- TODO! Allow drag of FX within and between track(s) rpr.TrackFX_CopyToTrack(src_track, src_fx, dest_track, dest_fx, bool is_move)
@@ -33,7 +33,8 @@
 -- Done! Partially visible FX name inside track rectangle is not cropped correctly. floor was changed to ceil, but not good enough
 -- Done! Undo, definitely for Alt+leftclick, but also for drag-drop
 --       This turned out to be window focus issue, see GitHub Issue #5 (now closed)
--- TODO! Measure time between mouse wheel to give focus to TCP when no mouse wheel for a certain time
+-- Done! Measure time between mouse wheel to give focus to TCP when no mouse wheel for a certain time
+--    *  This is now done, but it seems that in general it woudl be good to give to focus after some inactivity
 
 -- POSS? Double-click... to do what? Nah, too much hassle, have to keep track of time in-between LMB up and down...
 
@@ -46,7 +47,7 @@ local function Msg(str)
    if DO_DEBUG then rpr.ShowConsoleMsg(tostring(str).."\n") end
 end
 -------------------------------------------
--- Globals, variables with underscore are global
+-- Variables with underscore are global
 -- All caps denotes constants, do not assign to these in the code!
 -- Non-constants are used to communicate between different parts of the code
 local MFXlist = 
@@ -63,6 +64,9 @@ local MFXlist =
   --]]
   FX_DISABLEDA = 0.3, -- fade of name for disabled FX
   FX_OFFLINEDA = 0.1, -- even fainter for offlined FX
+  
+  -- Delay for return of focus during mouse wheel
+  FOCUS_DELAY = 10, 
   
   FONT_NAME1 = "Arial",
   FONT_NAME2 = "Courier New",
@@ -143,6 +147,7 @@ local MFXlist =
   MFX_HWND = nil, -- this is our own window, need this to make mousewheel work
   
   ACT_SCROLLVERT = 989, -- View: Scroll vertically (MIDI CC relative/mousewheel)
+  ACT_ZOOMVERT = 991, -- View: Zoom vertically (MIDI CC relative/mousewheel)
   ACT_SCROLLVIEWDOWN = 40139, -- View: Scroll view down
   ACT_SCROLLVIEWUP = 40138, -- View: Scroll view up
   
@@ -304,7 +309,8 @@ local function getTCPProperties()
   end
   return nil, -1, -1, -1, -1
 end
---------------------------------------------------------------------
+------------------------------------------------------------------------------------
+-- This works, except for when no modifier key is used, then it scrolls the arrange!
 local function sendTCPWheelMessage(mbkeys, wheel, screenx, screeny)
   
   local retval = rpr.JS_WindowMessage_Send(MFXlist.TCP_HWND, 
@@ -317,6 +323,7 @@ local function sendTCPWheelMessage(mbkeys, wheel, screenx, screeny)
 
 end -- sendTCPWheelMessage
 --------------------------------------------------------------------
+-- None of these seem to work, disregard
 local function sendTCPScrollMessage(mbkeys, wheel, screenx, screeny)
   
   -- From swell-types.h: 
@@ -359,6 +366,7 @@ local function focusTCP()
 
   -- rpr.Main_OnCommand(MFXlist.CMD_FOCUSTRACKS, 0) -- SWS
   rpr.JS_Window_SetFocus(MFXlist.TCP_HWND)
+  -- rpr.SetCursorContext(0) -- native
 
 end -- focusTCP
 local function focusMFX()
@@ -795,47 +803,64 @@ local function swapCtrlShft(bits)
 end -- swapCtrlShft
 ---------------------------------------------------------------
 -- Mouse wheel over MFXlist, send the TCP a mousewheel message
--- Need to "interpret" modifier keys to windows standard (?)
--- Reaper:  MLB, MRB, CTRL, SHFT, ALT, WIN, MID mouse button
--- Windows: MLB, MRB, SHFT, CTRL,    ,    , MID mouse button
--- bit indx  0    1     2    3    4    5     6
-local function handleMousewheel(wheel, mx, my)
+-- These variables are global but locally to handleWheel
+local count_down = 0 
+local prev_wheel = 0
+
+local function handleWheel(mcap, mx, my)
   
-  if wheel == 0 then return end -- no wheeling, nothing to do
+  local wheel = gfx.mouse_wheel
+  gfx.mouse_wheel = 0
   
-  focusMFX()
-  
-  -- put mx slightly to the right of our own track draw area
-  -- to enter into the TCP area
-  -- mx = gfx.w + 7 -- 7 pixels into the TCP area should be enough
-  local screenx, screeny = gfx.clienttoscreen(mx, my) 
-  -- screenx = screenx + 7
-  -- There does not seem to be much difference whethetr I do one or the other... or none
-  
-  -- There is an issue with passing mousewheel without mod keys on to the TCP
-  -- The message does not affect the TCP, instead the arrange view zooms
-  -- So, we use Main_OnCommand actions instead
-  if gfx.mouse_cap == 0 then
+  if wheel == 0 and prev_wheel == 0 then 
     
-    if wheel < 0 then
+    if count_down == 0 then return end
+    
+    count_down = count_down - 1 
+    if count_down == 0 then
+      focusTCP() -- do this after count down
+    end
+    return 
+    
+  end -- no wheeling, nothing more to do
+
+  count_down = MFXlist.FOCUS_DELAY
+  
+  -- So here wheel ~= 0, if this is the first time we need to grab focus and wait one scan cycle to get mod keys
+  if prev_wheel == 0 then -- remeber current wheel so we can act on it on the next scan
+    
+    prev_wheel = wheel -- remember wheel value
+    focusMFX() -- set focus so we get the mod keys
+    return
+    
+  end
+  
+  -- Here prev_wheel ~= 0 and focus is on MFX
+  
+  if mcap == 0 then -- no mod key
+    
+    if prev_wheel < 0 then
       rpr.Main_OnCommand(MFXlist.ACT_SCROLLVIEWDOWN, 0)
     else
       rpr.Main_OnCommand(MFXlist.ACT_SCROLLVIEWUP, 0)
     end
     
-  else -- For (some) modifier keys this works fine
+  -- elseif mcap & MFXlist.MOD_KEYS == MFXlist.MOD_CTRL then
+    -- Ctrl+Wheel over TCP locks the zoom to the track that is (or comes) under the cursor, pushing the
+    -- other tracks up/down. When sending wheel message with Ctrl mod key, this does not happen, instead
+    -- something unclear-what-exactly happens; but we leave it for now...
+    -- Could it be View: Zoom in/out vertically (40111, resp 40112) is what happens? No, not exactly that 
+    -- either, as those also lock to the track that is (or comes) under the cursor. Maybe must do that?
+  else
+    -- It does not seem to matter which type of coordinates that are sent
+    -- local screenx, screeny = gfx.clienttoscreen(mx, my)
+    -- local tcpx, tcpy = rpr.JS_Window_ScreenToClient(MFXlist.TCP_HWND, screenx, screeny)
+    sendTCPWheelMessage(mcap, prev_wheel, mx, my) 
+    --Msg("sendTCPWheelMessage("..mcap..", "..prev_wheel..", "..mx..", "..my)
     
-    local mbkeys = gfx.mouse_cap--swapCtrlShft(gfx.mouse_cap)
-    Msg("handleMouseWheel (2), mbkeys: "..mbkeys..", wheel: "..wheel)
-    sendTCPWheelMessage(mbkeys, wheel, screenx, screeny)
-    
-  end
-
-  gfx.mouse_wheel = 0
-  --focusTCP() -- After this modifier keys are no longer passed to the script
-                -- And if this is not here, no keys get passed to the TCP or arrange
-  -- So it seems that I cannot handle mouse wheel with modifier keys
-  --focusMFX()
+  end 
+  
+  prev_wheel = 0
   
 end -- handleMousewheel
 ------------------------------
@@ -1007,15 +1032,17 @@ local function handleMouse()
     MFXlist.footer_text = MFXlist.SCRIPT_NAME
   end
   
-  local wheel = gfx.mouse_wheel
-  if wheel ~= 0 then 
-    handleMousewheel(wheel, mx, my)
-    return true 
-  end
+  -- local wheel = gfx.mouse_wheel
+  -- if wheel ~= 0 then 
+  --   handleWheel(wheel, mx, my)
+  --  return true 
+  -- end
 
   local mcap = gfx.mouse_cap
   local mbldown = mcap & MFXlist.MB_LEFT
   local mbrdown = mcap & MFXlist.MB_RIGHT
+  
+  handleWheel(mcap, mx, my)
   
   --[[
   -- left mouse button down flank? (should really wait for up-flank to cater for drag, but not now)
@@ -1138,6 +1165,7 @@ local function initializeScript()
   openWindow()
   
   MFXlist.MFX_HWND = rpr.JS_Window_GetFocus() -- I'm assuming we have the focus now
+  -- MFXlist.MFX_HWND = rpr.JS_Window_Find(MFXlist.SCRIPT_NAME, true) -- should also work but have not tried it
   --local foregraound = rpr.JS_Window_GetForeground() -- and that we are at the foreground
   --assert(foregraound == MFXlist.MFX_HWND, "Something is amiss, either I'm not focused or I'm not foreground")
 
