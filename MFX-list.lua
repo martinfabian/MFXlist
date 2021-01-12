@@ -26,7 +26,7 @@
 -- TODO! Open Add FX dialog instead of FX Chain window on left click on empty slot. Have no idea how to do that, though.
 --       Also, only clicking on empty slot (right below last FX) should open Add FX, no?
 -- TODO! Find left docker to attach to automatically? Manual positiono works and is saved, but...
--- TODO! Allow drag of FX within and between track(s) rpr.TrackFX_CopyToTrack(src_track, src_fx, dest_track, dest_fx, bool is_move)
+-- Done! Allow drag of FX within and between track(s) rpr.TrackFX_CopyToTrack(src_track, src_fx, dest_track, dest_fx, bool is_move)
 --       Note that this requires change to the handling of the left MB, as it is now, down is interpreted as click
 -- Done! Track with FX chain disabled, looks no different from each FX disabled by itself (same as dopplist), but maybe should? How?
 -- TODO! Dragging, clicking, or just holding left MB down on header or footer should scroll, down for header, up for footer
@@ -34,7 +34,7 @@
 -- Done! Undo, definitely for Alt+leftclick, but also for drag-drop
 --       This turned out to be window focus issue, see GitHub Issue #5 (now closed)
 -- Done! Measure time between mouse wheel to give focus to TCP when no mouse wheel for a certain time
---    *  This is now done, but it seems that in general it woudl be good to give to focus after some inactivity
+--    *  This is now done, but it seems that in general it would be good to give to focus after some inactivity
 
 -- POSS? Double-click... to do what? Nah, too much hassle, have to keep track of time in-between LMB up and down...
 
@@ -880,14 +880,14 @@ local function handleLeftMB(mcap, mx, my)
     -- Left click inside track rect but not on FX, empty slot
     if modkeys == 0 then
       -- No modifier key, toggle FX Chain window (would want to open Add FX dialog, but how?)
-      local count = rpr.TrackFX_GetCount(track) - 1
-      if count < 0 then -- this case needs specal treatment
+      local count = rpr.TrackFX_GetCount(track) 
+      if count == 0 then -- this case needs specal treatment
         Msg("TODO! Empty slot clicked on track with zero FX")
         focusTCP()
-      else -- if FX Chain is not empty, toggling works
-        local openclose = rpr.TrackFX_GetOpen(track, count) and 0 or 1 
-        Msg("Left click over track empty slot, count: "..count..", openclose: "..openclose)
-        rpr.TrackFX_Show(track, count, openclose) -- does not work to toggle?
+      else -- if FX Chain is not empty, toggling works if some fx is selected
+        local openclose = rpr.TrackFX_GetOpen(track, count-1) and 0 or 1 
+        Msg("Left click over track empty slot, selected: "..(count-1)..", openclose: "..openclose)
+        rpr.TrackFX_Show(track, count-1, openclose) -- does not work to toggle?
         if openclose == 0 then -- we just closed and need to focus
           focusTCP()
         end
@@ -1009,7 +1009,9 @@ local function handleLeftMB(mcap, mx, my)
   end
   
 end -- handleLeftMB
-----------------------------
+--------------------------------------------------------------------
+local mblprev, mbrprev -- global but local, used only in handleMouse
+
 local function handleMouse()
   
   local mx, my = gfx.mouse_x, gfx.mouse_y
@@ -1058,26 +1060,70 @@ local function handleMouse()
   -- left mouse button up-flank, allows to drag 
   if mbldown ~= MFXlist.MB_LEFT and mblprev == MFXlist.MB_LEFT then
     mblprev = 0
-    if MFXlist.drag_startx - MFXlist.CLICK_RESOX <= mx and 
-      mx <= MFXlist.drag_startx + MFXlist.CLICK_RESOX and 
-      MFXlist.drag_starty - MFXlist.CLICK_RESOY <= my and 
+    -- Is up-flank within the resoultion, then it is a click
+    if MFXlist.drag_startx - MFXlist.CLICK_RESOX <= mx and  -- Note that if dragging is started, and then the drop
+      mx <= MFXlist.drag_startx + MFXlist.CLICK_RESOX and   -- is done within the resolution of drag start, then this
+      MFXlist.drag_starty - MFXlist.CLICK_RESOY <= my and   -- is interpreted as a click. fxlist does the same :-)
       my <= MFXlist.drag_starty + MFXlist.CLICK_RESOY then
         
         handleLeftMB(mcap, mx, my)
         MFXlist.drag_startx, MFXlist.drag_starty = nil, nil
+        MFXlist.drag_object = nil
         
-    else -- we are dragging, 
-      MFXlist.drag_object = {MFXlist.track_hovered, MFXlist.fx_hovered}
-      Msg("Dragging... start: ".."ystart "..MFXlist.drag_starty..".  yend: "..my)
-      local track = MFXlist.drag_object[1]
-      local fxid = MFXlist.drag_object[2]
-      local tname = rpr.GetTrackName(track)
-      local _, fxname = rpr.TrackFX_GetFXName(track, fxid, "")
-      Msg("Drag start: "..tname..", "..fxname)
+    else -- this is drag end, aka drop
+      
+      -- If the drop is done outside of MFXlist, then strack and ttrack == nil
+      -- This also fixes draopping on header or footer
+      local strack = MFXlist.drag_object[1]   -- source track
+      local ttrack = MFXlist.track_hovered  -- target track
+      if strack and ttrack then
+        local sfxid = MFXlist.drag_object[2]  -- source fx id
+        local tfxid = MFXlist.fx_hovered      -- target fxid, can be nil
+        
+        if DO_DEBUG then
+          -- Msg("Drag end... ".."ystart "..MFXlist.drag_starty..".  yend: "..my)
+          local _, sname = rpr.GetTrackName(strack)
+          local _, sfxname = rpr.TrackFX_GetFXName(strack, sfxid-1, "")
+          local _, tname = rpr.GetTrackName(ttrack)
+          local tfxname = "No target FX"
+          if tfxid then _, tfxname = rpr.TrackFX_GetFXName(ttrack, tfxid-1, "") end
+          Msg("Drop: "..sname..", "..sfxname.." to "..tname..", "..tfxname)
+        end -- DO_DEBUG
+        
+        -- Handle the drop
+        if not tfxid then
+          tfxid = rpr.TrackFX_GetCount(ttrack) + 1
+        end
+        -- If any combination of Ctrl is held down when dropping, then it is a copy
+        local tomove = not (gfx.mouse_cap & MFXlist.MOD_CTRL == MFXlist.MOD_CTRL)
+        
+        rpr.TrackFX_CopyToTrack(strack, sfxid-1, ttrack, tfxid-1, tomove)
+        
+      end
+      
+      -- Reset drag info
+      MFXlist.drag_startx, MFXlist.drag_starty = nil, nil
+      MFXlist.drag_object = nil
+      
     end
+  -- left mouse button down-flank, may be click or drag start
   elseif mbldown == MFXlist.MB_LEFT and mblprev ~= MFXlist.MB_LEFT then
-    mblprev = MFXlist.MB_LEFT -- possible drag start, need to store start pos
+    
+    mblprev = MFXlist.MB_LEFT 
     MFXlist.drag_startx, MFXlist.drag_starty = mx, my
+    
+    -- If down on hovered element then possible drag start, store start pos, and hovered element
+    if MFXlist.fx_hovered then
+      MFXlist.drag_object = {MFXlist.track_hovered, MFXlist.fx_hovered}
+      
+      if DO_DEBUG then
+        local track = MFXlist.drag_object[1]
+        local fxid = MFXlist.drag_object[2]
+        local _, tname = rpr.GetTrackName(track)
+        local _, fxname = rpr.TrackFX_GetFXName(track, fxid-1, "")
+        Msg("Possible drag start: "..tname..", "..fxname)
+      end -- DO_DEBUG
+    end
   end
   --]]
   
@@ -1204,8 +1250,8 @@ local function mfxlistMain()
   local continue = handleMouse() 
   
   rpr.PreventUIRefresh(-1)
-  rpr.TrackList_AdjustWindows(true)
-  rpr.UpdateArrange()
+  -- rpr.TrackList_AdjustWindows(true)
+  -- rpr.UpdateArrange()
   
   -- Check if we are to quit or not
   if gfx.getchar() < 0 or not continue then 
