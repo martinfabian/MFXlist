@@ -166,11 +166,14 @@ local MFXlist =
   track_hovered = nil, -- is set to the track (ptr) currently under mouse cursor, nil if mouse outside of client are
   fx_hovered = nil, -- is set to the index (1-based!) of FX under the mouse cursor, nil if mouse is outside of current track FX 
   
-  drag_startx = nil, -- used for left MB drag actions
-  drag_starty = nil,
+  mbl_downx = nil, -- stores left mouse button down coords, used for left MB drag actions
+  mbl_downy = nil,
+  down_object = nil, -- {track, fx} stores left mouse button down object if any
   drag_object = nil, -- {track, fx} that is dragged, given by track_hovered, fx_hovered
   drag_endx = nil,
   drag_endy = nil,
+  
+  openwin_list = nil, -- list of currently open windows to help the external win-close focus issue
   
   footer_text = "MFX-list", -- changes after initializing, shows name of currently hovered track
   header_text = "MFX-list", -- this doesn't really change after initialzing, but could if useful
@@ -374,6 +377,69 @@ local function focusMFX()
   rpr.JS_Window_SetFocus(MFXlist.MFX_HWND)
   
 end -- focusMFX
+----------------------------------------------------------
+-- Simple linked list implementation for the openwin_list
+local linkedList = 
+{
+  head = nil,
+  length = 0,
+  
+  new = function()
+          local self = {}
+          setmetatable(self, {__index = linkedList})
+          return self
+        end, -- new
+        
+  insert = function(self, element) 
+              self.head = {next = self.head, elem = element}
+              self.length = self.length + 1
+              return 
+            end, -- insert
+            
+  print = function(self)
+            if not self.head then
+              print("<empty list>")
+              return
+            end
+            local ptr = self.head
+            while ptr do
+              print(ptr.elem)
+              ptr = ptr.next
+            end
+          end, -- print
+          
+  find = function(self, element)
+          local ptr = self.head
+          while ptr do
+            if ptr.elem == element then 
+              return ptr -- found it
+            end
+            ptr = ptr.next
+          end
+          return ptr -- nil     
+        end, -- find
+        
+  -- Have to first find, then remove
+  remove = function(self, ptr)
+            if not ptr then return false end
+            
+            if ptr == self.head then
+              self.head = self.head.next
+              self.length = self.length - 1
+              return true
+            end
+            local pptr = self.head
+            while pptr do
+              if pptr.next == ptr then 
+                pptr.next = ptr.next -- adjust links
+                self.length = self.length - 1
+                return true
+              end
+              pptr = pptr.next
+            end
+            return false -- not found    
+          end, -- remove (ptr)
+}
 ----------------------------------------------------------------
 -- This doesn't work, I find no way to make sense of the docker
 local function findLeftDock()
@@ -673,7 +739,18 @@ local function drawFooter()
   end
 
 end -- drawFooter
-------------------------------
+----------------------------------
+local function drawDropIndicator()
+  
+  if gfx.mouse_cap & MFXlist.MOD_CTRL == MFXlist.MOD_CTRL then
+    gfx.set(0, 0, 1) -- blue indicates copy
+  else
+    gfx.set(0, 1, 0) -- green indicates move
+  end
+  gfx.line(10, gfx.y, gfx.w-10, gfx.y)
+  
+end -- drawDropIndicator
+-----------------------
 local function handleTracks()
   
   -- gfx.set(1, 1, 1)
@@ -695,9 +772,11 @@ local function handleTracks()
     local chainon = trinfo.enabled -- track FX chain enabled
     -- if the mouse is currently inside this track rect
     if MFXlist.mouse_y and posy <= MFXlist.mouse_y-drawy and MFXlist.mouse_y-drawy <= posy + height then
+      
       MFXlist.footer_text = trinfo.name
       insidetrack = true -- send message to FX part of code, see below
       MFXlist.track_hovered = trinfo.track
+      
     end
     -- Draw bounding box for track FX
     gfx.a = MFXlist.FX_OFFLINEDA -- bounding box is always drawn faint
@@ -713,23 +792,41 @@ local function handleTracks()
       gfx.a = (fx.enabled and not fx.offlined and chainon) and 1 or MFXlist.FX_DISABLEDA -- disabled FX are shown faint
       -- if mouse hovers over this FX, draw it in different color
       if insidetrack and gfx.y <= MFXlist.mouse_y and MFXlist.mouse_y < gfx.y + MFXlist.SLOT_HEIGHT then
+        
         gfx.set(MFXlist.COLOR_FXHOVERED[1], MFXlist.COLOR_FXHOVERED[2], MFXlist.COLOR_FXHOVERED[3], gfx.a)
         gfx.setfont(MFXlist.FONT_FXBOLD)
         MFXlist.fx_hovered = i -- store fx index (1-based!) for mouse click
-        -- Msg("fx_hovered assigned")
+        
       else
+        
         gfx.setfont(MFXlist.FONT_FXNAME)
         gfx.set(1, 1, 1, gfx.a)
+        
       end
       gfx.x = 0
       local corner = math.min(gfx.y + MFXlist.SLOT_HEIGHT, cropy) -- make sure to crop within the bounding track rect
       gfx.drawstr(fx.fxname, 1, gfx.w, corner) 
       if fx.offlined then -- strikeout offlined FX
+        
         local w, h = gfx.measurestr(fx.name)
-        local y = gfx.y+ MFXlist.SLOT_HEIGHT/2
+        local y = gfx.y + MFXlist.SLOT_HEIGHT/2
         gfx.line((gfx.w-w)/2, y, (gfx.w+w)/2, y, gfx.a)
+        
+      end
+      -- if dragging and are on top of this FX, show drop indicator above it
+      if insidetrack and MFXlist.drag_object and MFXlist.fx_hovered == i then
+        
+        drawDropIndicator()
+        
       end
       gfx.y = gfx.y + MFXlist.SLOT_HEIGHT
+      
+    end
+    -- if dragging and not hovering any FX, draw drop indicator at end of FX chain
+    if insidetrack and MFXlist.drag_object and not MFXlist.fx_hovered then
+      
+      drawDropIndicator()
+      
     end
   end
   
@@ -864,7 +961,7 @@ local function handleWheel(mcap, mx, my)
   
 end -- handleMousewheel
 ------------------------------
-local function handleLeftMB(mcap, mx, my)
+local function handleLeftMBclick(mcap, mx, my)
   
   local track = MFXlist.track_hovered
   local index = MFXlist.fx_hovered
@@ -877,54 +974,61 @@ local function handleLeftMB(mcap, mx, my)
     return
     
   elseif not MFXlist.fx_hovered then -- so we hover over track but not any fx
+    
     -- Left click inside track rect but not on FX, empty slot
     if modkeys == 0 then
+      
       -- No modifier key, toggle FX Chain window (would want to open Add FX dialog, but how?)
       local count = rpr.TrackFX_GetCount(track) 
       if count == 0 then -- this case needs specal treatment
+        
         Msg("TODO! Empty slot clicked on track with zero FX")
         focusTCP()
+        
       else -- if FX Chain is not empty, toggling works if some fx is selected
+        
         local openclose = rpr.TrackFX_GetOpen(track, count-1) and 0 or 1 
         Msg("Left click over track empty slot, selected: "..(count-1)..", openclose: "..openclose)
-        rpr.TrackFX_Show(track, count-1, openclose) -- does not work to toggle?
+        rpr.TrackFX_Show(track, count-1, openclose) 
+        
         if openclose == 0 then -- we just closed and need to focus
           focusTCP()
         end
+        
       end
       return
-    -- Note that modfier key check must come in this order. Reaper has that wrong in many cases
-    elseif modkeys & (MFXlist.MOD_SHIFT | MFXlist.MOD_CTRL | MFXlist.MOD_ALT) == (MFXlist.MOD_SHIFT | MFXlist.MOD_CTRL | MFXlist.MOD_ALT) then
+      
+    elseif modkeys & MFXlist.MOD_KEYS == (MFXlist.MOD_SHIFT | MFXlist.MOD_CTRL | MFXlist.MOD_ALT) then
       -- Shift+Ctrl+Alt
       Msg("TODO! Left click over track empty slot with Shift+Ctrl+Alt key!")
       focusTCP()
       return
-    elseif modkeys & (MFXlist.MOD_SHIFT | MFXlist.MOD_ALT) == (MFXlist.MOD_SHIFT | MFXlist.MOD_ALT) then
+    elseif modkeys & MFXlist.MOD_KEYS == (MFXlist.MOD_SHIFT | MFXlist.MOD_ALT) then
       -- Shift+Alt
       Msg("TODO! Left click over track empty slot with Shift+Alt key!")
       focusTCP()
       return
-    elseif modkeys & (MFXlist.MOD_SHIFT | MFXlist.MOD_CTRL) == (MFXlist.MOD_SHIFT | MFXlist.MOD_CTRL) then
+    elseif modkeys & MFXlist.MOD_KEYS == (MFXlist.MOD_SHIFT | MFXlist.MOD_CTRL) then
       -- Shift+Ctrl
       Msg("TODO! Left click over track empty slot with Shift+Ctrl key!")
       focusTCP()
       return
-    elseif modkeys & (MFXlist.MOD_CTRL | MFXlist.MOD_ALT) == (MFXlist.MOD_CTRL | MFXlist.MOD_ALT) then
+    elseif modkeys & MFXlist.MOD_KEYS == (MFXlist.MOD_CTRL | MFXlist.MOD_ALT) then
       -- Ctrl+Alt
       Msg("TODO! Left click over track empty slot with Ctrl+Alt key!")
       focusTCP()
       return
-    elseif modkeys & MFXlist.MOD_SHIFT == MFXlist.MOD_SHIFT then 
+    elseif modkeys & MFXlist.MOD_KEYS == MFXlist.MOD_SHIFT then 
       -- Shift key
       Msg("TODO! Left click over track empty slot with Shift key!")
       focusTCP()
       return
-    elseif modkeys & MFXlist.MOD_CTRL == MFXlist.MOD_CTRL then
+    elseif modkeys & MFXlist.MOD_KEYS == MFXlist.MOD_CTRL then
       -- Ctrl key
       Msg("TODO! Left click over track empty slot with Ctrl key!")
       focusTCP()
       return
-    elseif modkeys & MFXlist.MOD_ALT == MFXlist.MOD_ALT then
+    elseif modkeys & MFXlist.MOD_KEYS == MFXlist.MOD_ALT then
       -- Alt key
       Msg("TODO! Left click over track empty slot with Alt key!")
       focusTCP()
@@ -1010,6 +1114,15 @@ local function handleLeftMB(mcap, mx, my)
   
 end -- handleLeftMB
 --------------------------------------------------------------------
+local function withinResolution(mx, my)
+  
+return MFXlist.mbl_downx - MFXlist.CLICK_RESOX <= mx and  
+      mx <= MFXlist.mbl_downx + MFXlist.CLICK_RESOX and 
+      MFXlist.mbl_downy - MFXlist.CLICK_RESOY <= my and 
+      my <= MFXlist.mbl_downy + MFXlist.CLICK_RESOY
+      
+end -- insideResolution
+------
 local mblprev, mbrprev -- global but local, used only in handleMouse
 
 local function handleMouse()
@@ -1056,32 +1169,31 @@ local function handleMouse()
   end
   --]]
   
-  --[ [
   -- left mouse button up-flank, allows to drag 
   if mbldown ~= MFXlist.MB_LEFT and mblprev == MFXlist.MB_LEFT then
+    
     mblprev = 0
     -- Is up-flank within the resoultion, then it is a click
-    if MFXlist.drag_startx - MFXlist.CLICK_RESOX <= mx and  -- Note that if dragging is started, and then the drop
-      mx <= MFXlist.drag_startx + MFXlist.CLICK_RESOX and   -- is done within the resolution of drag start, then this
-      MFXlist.drag_starty - MFXlist.CLICK_RESOY <= my and   -- is interpreted as a click. fxlist does the same :-)
-      my <= MFXlist.drag_starty + MFXlist.CLICK_RESOY then
+    -- Note that if dragging is started, and then the drop is done within the resolution
+    -- of mbl_down (drag start), then this is interpreted as a click. fxlist does the same
+    if withinResolution(mx, my) then
         
-        handleLeftMB(mcap, mx, my)
-        MFXlist.drag_startx, MFXlist.drag_starty = nil, nil
+        handleLeftMBclick(mcap, mx, my)
+        MFXlist.mbl_downx, MFXlist.mbl_downy = nil, nil
         MFXlist.drag_object = nil
         
     else -- this is drag end, aka drop
       
       -- If the drop is done outside of MFXlist, then strack and ttrack == nil
-      -- This also fixes draopping on header or footer
-      local strack = MFXlist.drag_object[1]   -- source track
+      -- This also fixes dropping on header or footer, it seems
+      local strack = MFXlist.drag_object and MFXlist.drag_object[1] or nil  -- source track
       local ttrack = MFXlist.track_hovered  -- target track
       if strack and ttrack then
         local sfxid = MFXlist.drag_object[2]  -- source fx id
         local tfxid = MFXlist.fx_hovered      -- target fxid, can be nil
         
         if DO_DEBUG then
-          -- Msg("Drag end... ".."ystart "..MFXlist.drag_starty..".  yend: "..my)
+          -- Msg("Drag end... ".."ystart "..MFXlist.mbl_downy..".  yend: "..my)
           local _, sname = rpr.GetTrackName(strack)
           local _, sfxname = rpr.TrackFX_GetFXName(strack, sfxid-1, "")
           local _, tname = rpr.GetTrackName(ttrack)
@@ -1102,18 +1214,22 @@ local function handleMouse()
       end
       
       -- Reset drag info
-      MFXlist.drag_startx, MFXlist.drag_starty = nil, nil
+      MFXlist.mbl_downx, MFXlist.mbl_downy = nil, nil
       MFXlist.drag_object = nil
+      focusTCP()
       
     end
   -- left mouse button down-flank, may be click or drag start
   elseif mbldown == MFXlist.MB_LEFT and mblprev ~= MFXlist.MB_LEFT then
     
     mblprev = MFXlist.MB_LEFT 
-    MFXlist.drag_startx, MFXlist.drag_starty = mx, my
+    MFXlist.mbl_downx, MFXlist.mbl_downy = mx, my
+    MFXlist.down_object = {MFXlist.track_hovered, MFXlist.fx_hovered}
     
+    --[[
     -- If down on hovered element then possible drag start, store start pos, and hovered element
     if MFXlist.fx_hovered then
+      
       MFXlist.drag_object = {MFXlist.track_hovered, MFXlist.fx_hovered}
       
       if DO_DEBUG then
@@ -1123,13 +1239,37 @@ local function handleMouse()
         local _, fxname = rpr.TrackFX_GetFXName(track, fxid-1, "")
         Msg("Possible drag start: "..tname..", "..fxname)
       end -- DO_DEBUG
+      
     end
+    --]]
+  elseif mbldown == MFXlist.MB_LEFT and mblprev == MFXlist.MB_LEFT then
+    -- is down now was down previously, are we dragging?
+    -- If down on hovered element then possible drag start, store start pos, and hovered element
+    if not withinResolution(mx, my) then
+      if not MFXlist.drag_object and MFXlist.fx_hovered then
+        
+        MFXlist.drag_object = {MFXlist.track_hovered, MFXlist.fx_hovered}
+        
+        if DO_DEBUG then
+          local track = MFXlist.drag_object[1]
+          local fxid = MFXlist.drag_object[2]
+          local _, tname = rpr.GetTrackName(track)
+          local _, fxname = rpr.TrackFX_GetFXName(track, fxid-1, "")
+          Msg("Possible drag start: "..tname..", "..fxname)
+        end -- DO_DEBUG
+        
+      end
+    end
+    
+  elseif mbldown ~= MFXlist.MB_LEFT and mblprev ~= MFXlist.MB_LEFT then
+    
+    -- is up now, was up previosly, just idling
+    
   end
-  --]]
   
   -- right mouse button down flank?
   if mbrdown == MFXlist.MB_RIGHT and mbrprev ~= MFXlist.MB_RIGHT then
-    --local mx, my = gfx.mouse_x, gfx.mouse_y
+    
     mbrprev = MFXlist.MB_RIGHT
     local ret = handleMenu(mcap, mx, my) -- onRightClick()
     -- Msg("Showmenu returned: "..ret)
@@ -1138,8 +1278,11 @@ local function handleMouse()
       gfx.quit()
       return false -- tell the defer loop to quit
     end
+  -- right mous button up flank?
   elseif mbrdown ~= MFXlist.MB_RIGHT and mbrprev == MFXlist.MB_RIGHT then
+    
     mbrprev = 0
+    
   end
   
   return true
