@@ -99,10 +99,10 @@ local MFXlist =
   MOD_WIN = 32, 
   MOD_KEYS = 4+8+16+32, 
   
-  -- determinse how far nmouse can be moved between down and up to still be considered a left click
+  -- determines how far nmouse can be moved between down and up to still be considered a left click
   -- this then also decides how much the mosue has to move with left MB down to be considered as dragging
-  CLICK_RESOX = 10, -- it makes sense to horizontally accept more movement than vertically
-  CLICK_RESOY = 3, 
+  CLICK_RESOX = 30, -- maybe should not really care about horizontal moves?
+  CLICK_RESOY = 10, 
   
   -- Right click menu 
   MENU_STR = "Linear find last|Show first track|Show last track|Info|Quit",
@@ -123,7 +123,7 @@ local MFXlist =
   TRACK_FXENABLED = 4, 
   TRACK_MUTED = 8, -- seemed liek a good idea, but don't know how to really use it
   
-  -- Height for FX slots, FX names are drawn sentered (and clipped) inside this high rectangles
+  -- Height for FX slots, FX names are drawn centered (and clipped) inside this high rectangles
   SLOT_HEIGHT = 13, -- pixels high
   
   -- For matching and shrinking FX names
@@ -377,6 +377,11 @@ local function focusMFX()
   rpr.JS_Window_SetFocus(MFXlist.MFX_HWND)
   
 end -- focusMFX
+local function hasFocusMFX()
+  
+  return rpr.JS_Window_GetFocus() == MFXlist.MFX_HWND
+  
+end -- hasFocusMFX
 ----------------------------------------------------------
 -- Simple linked list implementation for the openwin_list
 local linkedList = 
@@ -982,8 +987,17 @@ local function handleLeftMBclick(mcap, mx, my)
       local count = rpr.TrackFX_GetCount(track) 
       if count == 0 then -- this case needs specal treatment
         
-        Msg("TODO! Empty slot clicked on track with zero FX")
-        focusTCP()
+        -- Quirk around Reaper anomaly here, FX chain window cannot open/close unless 
+        -- some FX is selected. So we add ReaEQ, open/close window, remove ReaEQ
+        rpr.TrackFX_AddByName(track, "ReaEQ", false, -1)
+        local openclose = rpr.TrackFX_GetOpen(track, 0) and 0 or 1
+        rpr.TrackFX_Show(track, 0, openclose)
+        rpr.TrackFX_Delete(track, 0)
+        -- YES! This f***ing seems to work!
+        
+        if openclose == 0 then
+          focusTCP()
+        end
         
       else -- if FX Chain is not empty, toggling works if some fx is selected
         
@@ -1181,6 +1195,7 @@ local function handleMouse()
         handleLeftMBclick(mcap, mx, my)
         MFXlist.mbl_downx, MFXlist.mbl_downy = nil, nil
         MFXlist.drag_object = nil
+        MFXlist.down_object = nil
         
     else -- this is drag end, aka drop
       
@@ -1216,6 +1231,7 @@ local function handleMouse()
       -- Reset drag info
       MFXlist.mbl_downx, MFXlist.mbl_downy = nil, nil
       MFXlist.drag_object = nil
+      MFXlist.down_object = nil
       focusTCP()
       
     end
@@ -1244,11 +1260,10 @@ local function handleMouse()
     --]]
   elseif mbldown == MFXlist.MB_LEFT and mblprev == MFXlist.MB_LEFT then
     -- is down now was down previously, are we dragging?
-    -- If down on hovered element then possible drag start, store start pos, and hovered element
     if not withinResolution(mx, my) then
-      if not MFXlist.drag_object and MFXlist.fx_hovered then
+      if not MFXlist.drag_object and MFXlist.down_object then
         
-        MFXlist.drag_object = {MFXlist.track_hovered, MFXlist.fx_hovered}
+        MFXlist.drag_object = MFXlist.down_object 
         
         if DO_DEBUG then
           local track = MFXlist.drag_object[1]
@@ -1369,7 +1384,7 @@ local function initializeScript()
   gfx.dest = MFXlist.BLITBUF_HEAD
   -- according to https://forum.cockos.com/showthread.php?t=204629, this piece is missing
   gfx.setimgdim(MFXlist.BLITBUF_HEAD , -1 , -1);
-  gfx.setimgdim(MFXlist.BLITBUF_HEAD, MFXlist.BLITBUF_HEADW, MFXlist.BLITBUF_HEADH) -- gfx.w, cy)
+  gfx.setimgdim(MFXlist.BLITBUF_HEAD, MFXlist.BLITBUF_HEADW, MFXlist.BLITBUF_HEADH)
   gfx.clear = MFXlist.COLOR_EMPTYSLOT[1] * 255 + MFXlist.COLOR_EMPTYSLOT[2] * 255 * 256 + MFXlist.COLOR_EMPTYSLOT[3] * 255 * 256 * 256 -- will this clear gfx.dest?
   gfx.set(1, 1, 1, 0.7)
   gfx.x, gfx.y = 0, 0
@@ -1378,6 +1393,7 @@ local function initializeScript()
   
   gfx.dest = -1
   handleTracks()
+  focusTCP()
   
 end -- initializeScript
 ------------------------------------------------ Here is the main loop
