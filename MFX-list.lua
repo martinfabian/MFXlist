@@ -20,8 +20,8 @@
 --       But there is also SWS/BR: Focus tracks, maybe that one is more suitable?
 --     * This is now done, except for the mouse wheel issue (see below)
 -- Done! Fix the scrolling, Mousewheel scroll over MFXlist sends message to TCP, but the arrange view is scrolled! 
--- TODO! Ctrl+Mousewheel in track area does not work the same way as Ctrl+Mousewheel over TCP
--- TODO! Clicking in track area outside of any FX opens FX Chain window. Clicking again, should close it. How to? 
+-- Done! Ctrl+Mousewheel in track area does not work the same way as Ctrl+Mousewheel over TCP
+-- Done! Clicking in track area outside of any FX opens FX Chain window. Clicking again, should close it. How to? 
 --       This is a problem for empty FX chains
 -- TODO! Open Add FX dialog instead of FX Chain window on left click on empty slot. Have no idea how to do that, though.
 --       Also, only clicking on empty slot (right below last FX) should open Add FX, no?
@@ -29,7 +29,6 @@
 -- Done! Allow drag of FX within and between track(s) rpr.TrackFX_CopyToTrack(src_track, src_fx, dest_track, dest_fx, bool is_move)
 --       Note that this requires change to the handling of the left MB, as it is now, down is interpreted as click
 -- Done! Track with FX chain disabled, looks no different from each FX disabled by itself (same as dopplist), but maybe should? How?
--- TODO! Dragging, clicking, or just holding left MB down on header or footer should scroll, down for header, up for footer
 -- Done! Partially visible FX name inside track rectangle is not cropped correctly. floor was changed to ceil, but not good enough
 -- Done! Undo, definitely for Alt+leftclick, but also for drag-drop
 --       This turned out to be window focus issue, see GitHub Issue #5 (now closed)
@@ -42,7 +41,7 @@ local string, table, math, os, utf8 = string, table, math, os, utf8
 local load, xpcall, pairs, ipairs = load, xpcall, pairs, ipairs, select
 local rpr, gfx = reaper, gfx
 -----------------------------------------  Just for debugging
-local DO_DEBUG = true
+local DO_DEBUG = false
 local function Msg(str)
    if DO_DEBUG then rpr.ShowConsoleMsg(tostring(str).."\n") end
 end
@@ -151,6 +150,9 @@ local MFXlist =
   ACT_SCROLLVIEWDOWN = 40139, -- View: Scroll view down
   ACT_SCROLLVIEWUP = 40138, -- View: Scroll view up
   
+  ACT_ZOOMINVERT = 40111, -- View: Zoom in vertical
+  ACT_ZOOMOUTVERT = 40112, -- View: Zoom out vertical
+  
   CMD_FOCUSARRANGE = 0, -- SWS/BR: Focus arrange (_BR_FOCUS_ARRANGE_WND)
   CMD_FOCUSTRACKS = 0,  -- SWS/BR: Focus tracks (_BR_FOCUS_TRACKS)
   CMD_SCROLLTCPDOWN = 0,-- Xenakios/SWS: Scroll track view down (page)
@@ -174,6 +176,7 @@ local MFXlist =
   drag_endy = nil,
   
   openwin_list = nil, -- list of currently open windows to help the external win-close focus issue
+  count_down = 0,
   
   footer_text = "MFX-list", -- changes after initializing, shows name of currently hovered track
   header_text = "MFX-list", -- this doesn't really change after initialzing, but could if useful
@@ -384,7 +387,7 @@ local function hasFocusMFX()
 end -- hasFocusMFX
 ----------------------------------------------------------
 -- Simple linked list implementation for the openwin_list
-local linkedList = 
+linkedList = -- has to be global here, made local below
 {
   head = nil,
   length = 0,
@@ -401,27 +404,33 @@ local linkedList =
               return 
             end, -- insert
             
-  print = function(self)
+  print = function(self, outputter)
+            if not outputter then
+              outputter = print
+            end
             if not self.head then
-              print("<empty list>")
+              outputter("<empty list>")
               return
             end
             local ptr = self.head
             while ptr do
-              print(ptr.elem)
+              outputter(ptr.elem)
               ptr = ptr.next
             end
           end, -- print
           
-  find = function(self, element)
+  find = function(self, element, compare)
+          if not compare then
+            compare = function(p1, p2) return p1 == p2 end 
+          end
           local ptr = self.head
           while ptr do
-            if ptr.elem == element then 
-              return ptr -- found it
+            if compare(ptr.elem, element) then
+              return ptr
             end
             ptr = ptr.next
           end
-          return ptr -- nil     
+          return ptr -- nil
         end, -- find
         
   -- Have to first find, then remove
@@ -445,6 +454,7 @@ local linkedList =
             return false -- not found    
           end, -- remove (ptr)
 }
+local linkedList = linkedList
 ----------------------------------------------------------------
 -- This doesn't work, I find no way to make sense of the docker
 local function findLeftDock()
@@ -472,6 +482,16 @@ local function findLeftDock()
   end
   
 end -- findLeftDock
+-----------------------------------------
+-- Seems that the only way to affect last
+-- touched track by scripting is to do:
+local function setLastTouchedTrack(track)
+  
+  -- Save current track selection
+  rpr.SetOnlyTrackSelected(track)
+  -- set back current track selection
+  
+end -- setLastTouchedTrack
 --------------------------------------------------------
 local function collectFX(track)
   assert(track, "collectFX: invalid parameter - track")
@@ -591,7 +611,7 @@ local function getFirstTCPTrackBinary()
     local track = rpr.GetTrack(CURR_PROJ, 0)
     return track, 1
   end
-    
+
   local left, right = 0, numtracks - 1
   while left <= right do
     local index = math.floor((left + right) / 2)
@@ -606,7 +626,14 @@ local function getFirstTCPTrackBinary()
       return track, index + 1
     end      
   end
-  assert(nil, "getFirstTCPTrackBinary: Should never get here!")
+  
+  -- Nasty bug somewhere...
+  local track = rpr.GetTrack(CURR_PROJ, 0)
+  local posy, height = getTrackPosAndHeight(track)
+  local mvis = rpr.GetMasterTrackVisibility()
+  local master = rpr.GetMasterTrack(CURR_PROJ)
+  local mposy, mheight = getTrackPosAndHeight(master)
+  assert(nil, "getFirstTCPTrackBinary: Should never get here! * Master track: "..mvis..", "..mposy..", "..mheight.." * First track: "..posy..", "..height)
   
 end -- getFirstTCPTrackBinary
 ---------------------------------------------------------------------------
@@ -906,7 +933,7 @@ end -- swapCtrlShft
 ---------------------------------------------------------------
 -- Mouse wheel over MFXlist, send the TCP a mousewheel message
 -- These variables are global but locally to handleWheel
-local count_down = 0 
+-- local count_down = 0 -- replaced by MFXlist.count_down
 local prev_wheel = 0
 
 local function handleWheel(mcap, mx, my)
@@ -915,24 +942,26 @@ local function handleWheel(mcap, mx, my)
   gfx.mouse_wheel = 0
   
   if wheel == 0 and prev_wheel == 0 then 
+    --[ [ -- this can maybe also be handled right before the defer in the main fun
+    if MFXlist.count_down == 0 then return end
     
-    if count_down == 0 then return end
-    
-    count_down = count_down - 1 
-    if count_down == 0 then
+    MFXlist.count_down = MFXlist.count_down - 1 
+    if MFXlist.count_down == 0 then
       focusTCP() -- do this after count down
     end
+    --]]
     return 
     
   end -- no wheeling, nothing more to do
 
-  count_down = MFXlist.FOCUS_DELAY
+  MFXlist.count_down = MFXlist.FOCUS_DELAY
   
   -- So here wheel ~= 0, if this is the first time we need to grab focus and wait one scan cycle to get mod keys
   if prev_wheel == 0 then -- remeber current wheel so we can act on it on the next scan
     
     prev_wheel = wheel -- remember wheel value
     focusMFX() -- set focus so we get the mod keys
+    MFXlist.count_down = 0 -- make sure we do not lose focus
     return
     
   end
@@ -947,12 +976,23 @@ local function handleWheel(mcap, mx, my)
       rpr.Main_OnCommand(MFXlist.ACT_SCROLLVIEWUP, 0)
     end
     
-  -- elseif mcap & MFXlist.MOD_KEYS == MFXlist.MOD_CTRL then
+  elseif mcap & MFXlist.MOD_KEYS == MFXlist.MOD_CTRL then
     -- Ctrl+Wheel over TCP locks the zoom to the track that is (or comes) under the cursor, pushing the
     -- other tracks up/down. When sending wheel message with Ctrl mod key, this does not happen, instead
     -- something unclear-what-exactly happens; but we leave it for now...
     -- Could it be View: Zoom in/out vertically (40111, resp 40112) is what happens? No, not exactly that 
     -- either, as those also lock to the track that is (or comes) under the cursor. Maybe must do that?
+    
+    -- No, these does not seem to work as expected either. 
+    -- setLastTouchedTrack(MFXlist.track_hovered)
+    if prev_wheel < 0 then
+      Msg("Ctrl+wheel, ACT_ZOOMOUTVERT")
+      rpr.Main_OnCommand(MFXlist.ACT_ZOOMOUTVERT, 0)
+    else
+      Msg("Ctrl+wheel, ACT_ZOOMINVERT")
+      rpr.Main_OnCommand(MFXlist.ACT_ZOOMINVERT, 0)
+    end
+    
   else
     -- It does not seem to matter which type of coordinates that are sent
     -- local screenx, screeny = gfx.clienttoscreen(mx, my)
@@ -965,7 +1005,98 @@ local function handleWheel(mcap, mx, my)
   prev_wheel = 0
   
 end -- handleMousewheel
-------------------------------
+-----------------------------------------------------------------------------
+-- When FX chain or FX float win is opened, it is added to the openwin_list
+-- If externally closed (ESC or top right X) it remains on the list
+-- If there is no such win open, MFX has focus and need to give it away
+-- Walk the list, if a window on the list is found that is not open, give the
+-- focus to teh TCP (ideally would be to the next window, but no idea how)
+local function manageOpenWindows()
+  
+  if MFXlist.openwin_list.length > 0 then -- is it faster to check head for nil?
+    local ptr = MFXlist.openwin_list.head
+    while ptr do
+      if not rpr.TrackFX_GetOpen(ptr.elem[1], ptr.elem[2]) then -- someone closed, but not me
+        MFXlist.openwin_list:remove(ptr)
+        focusTCP()
+        return
+      end
+      ptr = ptr.next
+    end
+  end
+  
+end -- manageOpenWindows
+-----------------------------------------------------------------------------------
+-- It seems manageOpenWindows solved the problem was attempted to be solved by this
+local prev_focus = false
+local focus_counter = 0 -- just for debug, really
+local function manageFocus()
+  
+  local hasfocus = hasFocusMFX()
+  -- Just got focus
+  if hasfocus and not prev_focus then
+    
+    focus_counter = focus_counter + 1
+    Msg(focus_counter..": MFX got focus")
+    prev_focus = true
+    
+  -- Just lost focus
+  elseif not hasfocus and prev_focus then
+    
+    focus_counter = focus_counter + 1
+    Msg(focus_counter..": MFX lost focus")
+    prev_focus = false
+    
+  -- was lost, still lost
+  elseif not hasFocus and not prev_focus then
+    
+  -- had focus. still have it
+  else -- hasFocus and prev_focus 
+    
+  end
+  
+end -- manageFocus
+-----------------------------------------------------------
+-- index is here 0-based!
+-- wtype is 0 for FX chain window, 2 for floating FX window
+local function handleToggleWindow(track, index, wtype)
+  
+  local openclose = rpr.TrackFX_GetOpen(track, index) and wtype or wtype + 1 -- 0,2: to close, 1,3: to open
+  
+  if nil then -- DO_DEBUG then
+    local _, tname = rpr.GetTrackName(track)
+    local _, fxname = rpr.TrackFX_GetFXName(track, index, "")
+    Msg("handleToggleWindow: "..tname..", "..fxname.." (openclose: "..openclose..", wtype: "..wtype..")")
+  end -- DO_DEBUG
+  
+  rpr.TrackFX_Show(track, index, openclose)  
+  
+  if openclose == wtype then -- just closed, remove from openwin_list, and focus TCP
+    
+    local compare = function(p1, p2) return p1[1] == p2[1] and p1[2] == p2[2] end
+    local ptr = MFXlist.openwin_list:find({track, index}, compare)
+    
+    if ptr then -- what if not found (we get nil here)?
+      
+      MFXlist.openwin_list:remove(ptr)
+      
+    end
+    
+    if nil then -- DO_DEBUG then
+      local str = (not ptr and "nil!" or "found")
+      Msg("Window "..str..", list size: "..MFXlist.openwin_list.length)
+    end -- DO_DEBUG
+    
+    focusTCP()
+    
+  else -- just opened, add to openwin_list
+    
+    MFXlist.openwin_list:insert({track, index})
+    
+  end
+  
+end -- handleToggleWindow
+----------------------------------------------
 local function handleLeftMBclick(mcap, mx, my)
   
   local track = MFXlist.track_hovered
@@ -974,14 +1105,18 @@ local function handleLeftMBclick(mcap, mx, my)
   
   if not track then -- we clicked oustide track area, header or footer
     
-    Msg("TODO! Left click over header or footer. What to do?")
+    if my < MFXlist.TCP_top then
+      Msg("TODO! Left click over header, invoke command")
+    elseif my >= MFXlist.TCP_bot then
+      Msg("TODO! Left click over footer. Anything useful to do?")
+    end
     focusTCP()
     return
     
+  -- Left click inside track rect but not on FX, empty slot
   elseif not MFXlist.fx_hovered then -- so we hover over track but not any fx
     
-    -- Left click inside track rect but not on FX, empty slot
-    if modkeys == 0 then
+    if (modkeys == 0) or (modkeys & MFXlist.MOD_KEYS == MFXlist.MOD_CTRL) then
       
       -- No modifier key, toggle FX Chain window (would want to open Add FX dialog, but how?)
       local count = rpr.TrackFX_GetCount(track) 
@@ -990,26 +1125,18 @@ local function handleLeftMBclick(mcap, mx, my)
         -- Quirk around Reaper anomaly here, FX chain window cannot open/close unless 
         -- some FX is selected. So we add ReaEQ, open/close window, remove ReaEQ
         rpr.TrackFX_AddByName(track, "ReaEQ", false, -1)
-        local openclose = rpr.TrackFX_GetOpen(track, 0) and 0 or 1
-        rpr.TrackFX_Show(track, 0, openclose)
-        rpr.TrackFX_Delete(track, 0)
-        -- YES! This f***ing seems to work!
         
-        if openclose == 0 then
-          focusTCP()
-        end
+        handleToggleWindow(track, 0, 0)
+        
+        rpr.TrackFX_Delete(track, 0) -- YES! This f***ing seems to work!
+        -- But the delete makes teh window unfocused! Never mind for now.
         
       else -- if FX Chain is not empty, toggling works if some fx is selected
         
-        local openclose = rpr.TrackFX_GetOpen(track, count-1) and 0 or 1 
-        Msg("Left click over track empty slot, selected: "..(count-1)..", openclose: "..openclose)
-        rpr.TrackFX_Show(track, count-1, openclose) 
-        
-        if openclose == 0 then -- we just closed and need to focus
-          focusTCP()
-        end
+        handleToggleWindow(track, count-1, 0)
         
       end
+      
       return
       
     elseif modkeys & MFXlist.MOD_KEYS == (MFXlist.MOD_SHIFT | MFXlist.MOD_CTRL | MFXlist.MOD_ALT) then
@@ -1037,11 +1164,10 @@ local function handleLeftMBclick(mcap, mx, my)
       Msg("TODO! Left click over track empty slot with Shift key!")
       focusTCP()
       return
-    elseif modkeys & MFXlist.MOD_KEYS == MFXlist.MOD_CTRL then
-      -- Ctrl key
-      Msg("TODO! Left click over track empty slot with Ctrl key!")
-      focusTCP()
-      return
+    -- elseif modkeys & MFXlist.MOD_KEYS == MFXlist.MOD_CTRL then
+      -- Ctrl-left click over track empty slot, behave as with no Ctrl key
+      -- Already taken care of above      
+      --return
     elseif modkeys & MFXlist.MOD_KEYS == MFXlist.MOD_ALT then
       -- Alt key
       Msg("TODO! Left click over track empty slot with Alt key!")
@@ -1050,19 +1176,14 @@ local function handleLeftMBclick(mcap, mx, my)
     else
       assert(nil, "handleLeftMB (1): should not get here!")
     end
-    
+    return
   end
   
+  -- Clicked on specific FX in track
   if modkeys == 0 then 
-    -- simple click on FX, show/hide floating window for FX
+    -- no mod key show/hide floating window for FX
     
-    local showhide = rpr.TrackFX_GetOpen(track, index-1) and 2 or 3 -- 2 for hide floating win, 3 for show floating win
-    rpr.TrackFX_Show(track, index-1, showhide)
-    -- Set focus to TCP, but only on hide since on open the just opened window should have focus
-    if showhide == 2 then
-      focusTCP()
-    end
-    return
+    handleToggleWindow(track, index-1, 2)
     
   elseif modkeys & (MFXlist.MOD_SHIFT | MFXlist.MOD_CTRL | MFXlist.MOD_ALT) == (MFXlist.MOD_SHIFT | MFXlist.MOD_CTRL | MFXlist.MOD_ALT) then
     -- Shift+Alt
@@ -1106,13 +1227,7 @@ local function handleLeftMBclick(mcap, mx, my)
   elseif modkeys & MFXlist.MOD_CTRL == MFXlist.MOD_CTRL then -- show/hide chain
     -- Ctrl+Left click on FX, toggle track FX Chain window with FX selected
     
-    local openclose = rpr.TrackFX_GetOpen(track, index-1) and 0 or 1 -- 0 for hide FX chain win, 1 for show FX chain win
-    rpr.TrackFX_Show(track, index-1, openclose)
-    -- Set focus to the TCP, but only on close, as after open the just opened win should have focus
-    if openclose == 0 then 
-      focusTCP()
-    end
-    return
+    handleToggleWindow(track, index-1, 0)
     
   elseif modkeys & MFXlist.MOD_ALT == MFXlist.MOD_ALT then -- delete
     -- Alt+Left click on FX, delete FX
@@ -1147,43 +1262,29 @@ local function handleMouse()
   if mx < 0 or gfx.w < mx or my < 0 or gfx.h < my then -- outside of client area
     MFXlist.mouse_y = nil
     MFXlist.footer_text = MFXlist.SCRIPT_NAME
-    return true 
+    return true -- means "do not quit"
   end    
   
   -- Are we inside the track draw area?
   if 0 <= mx and mx <= gfx.w and MFXlist.TCP_top <= my and my <= MFXlist.TCP_bot then 
     -- this only works when docked (but then... lots of stuff here only works when docked)
     MFXlist.mouse_y = my
-    --MFXlist.fx_hovered = nil -- {0, 0} -- zerozero means not over any FX
+    
   else -- either in header or in footer
+    
     MFXlist.fx_hovered = nil
     MFXlist.mouse_y = nil
     MFXlist.footer_text = MFXlist.SCRIPT_NAME
+    
   end
   
-  -- local wheel = gfx.mouse_wheel
-  -- if wheel ~= 0 then 
-  --   handleWheel(wheel, mx, my)
-  --  return true 
-  -- end
-
   local mcap = gfx.mouse_cap
   local mbldown = mcap & MFXlist.MB_LEFT
   local mbrdown = mcap & MFXlist.MB_RIGHT
   
   handleWheel(mcap, mx, my)
   
-  --[[
-  -- left mouse button down flank? (should really wait for up-flank to cater for drag, but not now)
-  if mbldown == MFXlist.MB_LEFT and mblprev ~= MFXlist.MB_LEFT then
-    mblprev = MFXlist.MB_LEFT
-    handleLeftMB(mcap, mx, my)
-  elseif mbldown ~= MFXlist.MB_LEFT and mblprev == MFXlist.MB_LEFT then
-    mblprev = 0
-  end
-  --]]
-  
-  -- left mouse button up-flank, allows to drag 
+  -- left mouse button up-flank
   if mbldown ~= MFXlist.MB_LEFT and mblprev == MFXlist.MB_LEFT then
     
     mblprev = 0
@@ -1191,12 +1292,9 @@ local function handleMouse()
     -- Note that if dragging is started, and then the drop is done within the resolution
     -- of mbl_down (drag start), then this is interpreted as a click. fxlist does the same
     if withinResolution(mx, my) then
-        
-        handleLeftMBclick(mcap, mx, my)
-        MFXlist.mbl_downx, MFXlist.mbl_downy = nil, nil
-        MFXlist.drag_object = nil
-        MFXlist.down_object = nil
-        
+      
+      handleLeftMBclick(mcap, mx, my)
+      
     else -- this is drag end, aka drop
       
       -- If the drop is done outside of MFXlist, then strack and ttrack == nil
@@ -1223,7 +1321,7 @@ local function handleMouse()
         end
         -- If any combination of Ctrl is held down when dropping, then it is a copy
         local tomove = not (gfx.mouse_cap & MFXlist.MOD_CTRL == MFXlist.MOD_CTRL)
-        
+        Msg("tomove: "..(tomove and "true" or "false")..", mcap: "..gfx.mouse_cap)
         rpr.TrackFX_CopyToTrack(strack, sfxid-1, ttrack, tfxid-1, tomove)
         
       end
@@ -1232,6 +1330,7 @@ local function handleMouse()
       MFXlist.mbl_downx, MFXlist.mbl_downy = nil, nil
       MFXlist.drag_object = nil
       MFXlist.down_object = nil
+      
       focusTCP()
       
     end
@@ -1241,29 +1340,16 @@ local function handleMouse()
     mblprev = MFXlist.MB_LEFT 
     MFXlist.mbl_downx, MFXlist.mbl_downy = mx, my
     MFXlist.down_object = {MFXlist.track_hovered, MFXlist.fx_hovered}
+    MFXlist.count_down = 0
     
-    --[[
-    -- If down on hovered element then possible drag start, store start pos, and hovered element
-    if MFXlist.fx_hovered then
-      
-      MFXlist.drag_object = {MFXlist.track_hovered, MFXlist.fx_hovered}
-      
-      if DO_DEBUG then
-        local track = MFXlist.drag_object[1]
-        local fxid = MFXlist.drag_object[2]
-        local _, tname = rpr.GetTrackName(track)
-        local _, fxname = rpr.TrackFX_GetFXName(track, fxid-1, "")
-        Msg("Possible drag start: "..tname..", "..fxname)
-      end -- DO_DEBUG
-      
-    end
-    --]]
+  -- down now, down previously, maybe we are dragging
   elseif mbldown == MFXlist.MB_LEFT and mblprev == MFXlist.MB_LEFT then
-    -- is down now was down previously, are we dragging?
+    
     if not withinResolution(mx, my) then
       if not MFXlist.drag_object and MFXlist.down_object then
         
         MFXlist.drag_object = MFXlist.down_object 
+        MFXlist.count_down = 0 -- (try to) make sure we do not lose focus
         
         if DO_DEBUG then
           local track = MFXlist.drag_object[1]
@@ -1293,7 +1379,7 @@ local function handleMouse()
       gfx.quit()
       return false -- tell the defer loop to quit
     end
-  -- right mous button up flank?
+  -- right mouse button up flank?
   elseif mbrdown ~= MFXlist.MB_RIGHT and mbrprev == MFXlist.MB_RIGHT then
     
     mbrprev = 0
@@ -1380,6 +1466,8 @@ local function initializeScript()
   gfx.setfont(MFXlist.FONT_FXBOLD, MFXlist.FONT_NAME1, MFXlist.FONT_SIZE1, MFXlist.FONT_BOLDFLAG)
   gfx.setfont(MFXlist.FONT_HEADER, MFXlist.FONT_NAME2, MFXlist.FONT_SIZE2)
   
+  MFXlist.openwin_list = linkedList.new()
+    
   -- Set up the header buffer for blitting -- cannot seem to get the blit of the header to work 
   gfx.dest = MFXlist.BLITBUF_HEAD
   -- according to https://forum.cockos.com/showthread.php?t=204629, this piece is missing
@@ -1405,6 +1493,7 @@ local function mfxlistMain()
   
   rpr.PreventUIRefresh(1)
 
+  
   handleTracks()
   local continue = handleMouse() 
   
@@ -1418,9 +1507,26 @@ local function mfxlistMain()
     return
   end
 
-  -- set focus to TCP. Seems to work, but...
-  -- Cannot have it here, it messes up other windows focus, such as Action window!
-  -- focusTCP()
+  --[[ -- Compare handleWheel where a similar construct exists, is this OK?
+  -- This is meant to fix the focus issue, and it seems to do that, at the 
+  -- expense of FX windows opened by clicking in MFX loses focus, so they 
+  -- cannot be immediatly closed by hitting ESC. Bad? Or acceptable?
+  -- It also seems to mess with the Ctrl+drag, only if Ctrl is down before dragging 
+  -- does the copy work (maybe should ALWAYS do copy, like fxlist?)
+  if MFXlist.count_down > 0 then
+    MFXlist.count_down = MFXlist.count_down - 1
+    if MFXlist.count_down == 0 then
+      focusTCP()
+    end
+  elseif hasFocusMFX() and not MFXlist.drag_object then
+    MFXlist.count_down = MFXlist.FOCUS_DELAY
+  end
+  --]]
+  -- Let's try soem window management instead
+  manageOpenWindows()
+  -- manageFocus()
+
+  
   rpr.defer(mfxlistMain)
   
 end -- mfxlistMain
