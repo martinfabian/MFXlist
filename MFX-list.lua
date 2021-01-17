@@ -125,6 +125,9 @@ local MFXlist =
   -- Height for FX slots, FX names are drawn centered (and clipped) inside this high rectangles
   SLOT_HEIGHT = 13, -- pixels high
   
+  -- Gap between the first track and teh master track (when visible)
+  MASTER_GAP = 5,
+  
   -- For matching and shrinking FX names
   MATCH_UPTOCOLON = "(.-:)",
   
@@ -599,7 +602,7 @@ local function getFirstTCPTrackBinary()
     local master = rpr.GetMasterTrack(CURR_PROJ)
     local posy, height = getTrackPosAndHeight(master)
     if height + posy > 0 then return master, 0 end
-    if height + posy == 0 then fixForMasterTCPgap = true end
+    if height + posy + MFXlist.MASTER_GAP >= 0 then fixForMasterTCPgap = true end
   end
   
   local numtracks = rpr.CountTracks(CURR_PROJ)
