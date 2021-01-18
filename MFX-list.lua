@@ -38,8 +38,7 @@
 
 -- POSS? Double-click... to do what? Nah, too much hassle, have to keep track of time in-between LMB up and down...
 
-local string, table, math, os, utf8 = string, table, math, os, utf8
-local load, xpcall, pairs, ipairs = load, xpcall, pairs, ipairs, select
+local string, table, math = string, table, math
 local rpr, gfx = reaper, gfx
 -----------------------------------------  Just for debugging
 local DO_DEBUG = false
@@ -532,10 +531,11 @@ local function getTrackInfo(track)
   local _, name = rpr.GetTrackName(track)
   local visible = rpr.IsTrackVisible(track, false) -- false for TCP (true for MCP)
   local enabled = rpr.GetMediaTrackInfo_Value(track, "I_FXEN") ~= 0 -- fx enabled, 0=bypassed, !0=fx active
+  local selected = rpr.IsTrackSelected(track) -- true if selected, false if not
   local posy, height = getTrackPosAndHeight(track)
   local fx = collectFX(track)
   
-  return {track = track, name = name, visible = visible, enabled = enabled, height = height, posy = posy, fx = fx}
+  return {track = track, name = name, selected = selected, visible = visible, enabled = enabled, height = height, posy = posy, fx = fx}
 end
 ------------------------------
 local function collectTracks()
@@ -723,7 +723,7 @@ local function collectVisibleTracks()
     table.insert(vistracks, minfo)
     findex = 1
   end
-    
+  
   for i = findex, lindex do
     local track = rpr.GetTrack(CURR_PROJ, i-1)
     local trinfo = getTrackInfo(track)
@@ -818,7 +818,7 @@ local function handleTracks()
     end
     -- Draw bounding box for track FX
     gfx.a = MFXlist.FX_OFFLINEDA -- bounding box is always drawn faint
-    gfx.rect(0, drawy + posy, gfx.w, height, (chainon and 0 or 1)) -- abled chain is not filled with faint color
+    gfx.rect(0, drawy + posy, gfx.w, height, (chainon and 0 or 1)) -- disabled chain is not filled with faint color
     -- Calc the number of FX slots to draw, and draw them
     local fxlist = trinfo.fx
     local numfxs = math.ceil(height / MFXlist.SLOT_HEIGHT) -- max num FX to show 
@@ -1127,9 +1127,53 @@ local function handleLeftMBclick(mcap, mx, my)
   -- Left click inside track rect but not on FX, empty slot
   elseif not MFXlist.fx_hovered then -- so we hover over track but not any fx
     
-    if (modkeys == 0) or (modkeys & MFXlist.MOD_KEYS == MFXlist.MOD_CTRL) then
+    if modkeys == 0 then -- No modifier key, open Add FX dialog
       
-      -- No modifier key, toggle FX Chain window (would want to open Add FX dialog, but how?)
+      rpr.SetOnlyTrackSelected(track)
+      rpr.Main_OnCommand(MFXlist.ACT_FXBROWSERWINDOW, 0)
+      -- focusTCP() -- Should let the FX Browser have focus
+      
+      -- Two issues introduced here:
+      -- 1. The track selection changes, this is necessary since that is the way that the FX browser
+      --    knows which track to add to. fxlist does the same. But clicking an empty slot in the
+      --    mixer does not change the track selection. Maybe store track selection before and then
+      --    restore it after opening teh FX browser? 
+      -- 2. Clicking once opens the FX browser, clicking again closes it. MFX then gets the focus,
+      --    and then the focus is stolen so no key strokes go to Reaper. And I see no way to query 
+      --    the FX browser window's state, or how to put it on openwin_list. Keeping track of the
+      --    state myself is not a solution, as the window can be closed by ESC, Cancel, or upper 
+      --    right X. Also, when clicking OK in teh FX browser, teh FX chain window opens. Closing
+      --    one again gives focus to MFX, and the focus is stolen.
+      
+      return
+      
+    elseif modkeys == (MFXlist.MOD_SHIFT | MFXlist.MOD_CTRL | MFXlist.MOD_ALT) then
+      -- Shift+Ctrl+Alt
+      Msg("TODO! Left click over track empty slot with Shift+Ctrl+Alt key!")
+      focusTCP()
+      return
+    elseif modkeys == (MFXlist.MOD_SHIFT | MFXlist.MOD_ALT) then
+      -- Shift+Alt
+      Msg("TODO! Left click over track empty slot with Shift+Alt key!")
+      focusTCP()
+      return
+    elseif modkeys == (MFXlist.MOD_SHIFT | MFXlist.MOD_CTRL) then
+      -- Shift+Ctrl
+      Msg("TODO! Left click over track empty slot with Shift+Ctrl key!")
+      focusTCP()
+      return
+    elseif modkeys == (MFXlist.MOD_CTRL | MFXlist.MOD_ALT) then
+      -- Ctrl+Alt
+      Msg("TODO! Left click over track empty slot with Ctrl+Alt key!")
+      focusTCP()
+      return
+    elseif modkeys == MFXlist.MOD_SHIFT then 
+      -- Shift key
+      Msg("TODO! Left click over track empty slot with Shift key!")
+      focusTCP()
+      return
+    elseif modkeys == MFXlist.MOD_CTRL then
+      -- Ctrl-left click over track empty slot, behave as with no Ctrl key
       local count = rpr.TrackFX_GetCount(track) 
       if count == 0 then -- this case needs specal treatment
         
@@ -1147,39 +1191,9 @@ local function handleLeftMBclick(mcap, mx, my)
         handleToggleWindow(track, count-1, 0)
         
       end
-      
       return
       
-    elseif modkeys & MFXlist.MOD_KEYS == (MFXlist.MOD_SHIFT | MFXlist.MOD_CTRL | MFXlist.MOD_ALT) then
-      -- Shift+Ctrl+Alt
-      Msg("TODO! Left click over track empty slot with Shift+Ctrl+Alt key!")
-      focusTCP()
-      return
-    elseif modkeys & MFXlist.MOD_KEYS == (MFXlist.MOD_SHIFT | MFXlist.MOD_ALT) then
-      -- Shift+Alt
-      Msg("TODO! Left click over track empty slot with Shift+Alt key!")
-      focusTCP()
-      return
-    elseif modkeys & MFXlist.MOD_KEYS == (MFXlist.MOD_SHIFT | MFXlist.MOD_CTRL) then
-      -- Shift+Ctrl
-      Msg("TODO! Left click over track empty slot with Shift+Ctrl key!")
-      focusTCP()
-      return
-    elseif modkeys & MFXlist.MOD_KEYS == (MFXlist.MOD_CTRL | MFXlist.MOD_ALT) then
-      -- Ctrl+Alt
-      Msg("TODO! Left click over track empty slot with Ctrl+Alt key!")
-      focusTCP()
-      return
-    elseif modkeys & MFXlist.MOD_KEYS == MFXlist.MOD_SHIFT then 
-      -- Shift key
-      Msg("TODO! Left click over track empty slot with Shift key!")
-      focusTCP()
-      return
-    -- elseif modkeys & MFXlist.MOD_KEYS == MFXlist.MOD_CTRL then
-      -- Ctrl-left click over track empty slot, behave as with no Ctrl key
-      -- Already taken care of above      
-      --return
-    elseif modkeys & MFXlist.MOD_KEYS == MFXlist.MOD_ALT then
+    elseif modkeys == MFXlist.MOD_ALT then
       -- Alt key
       Msg("TODO! Left click over track empty slot with Alt key!")
       focusTCP()
@@ -1196,37 +1210,37 @@ local function handleLeftMBclick(mcap, mx, my)
     
     handleToggleWindow(track, index-1, 2)
     
-  elseif modkeys & (MFXlist.MOD_SHIFT | MFXlist.MOD_CTRL | MFXlist.MOD_ALT) == (MFXlist.MOD_SHIFT | MFXlist.MOD_CTRL | MFXlist.MOD_ALT) then
+  elseif modkeys == (MFXlist.MOD_SHIFT | MFXlist.MOD_CTRL | MFXlist.MOD_ALT) then
     -- Shift+Alt
     Msg("TODO! Left click over track FX with Shift+Ctrl+Alt key!")
     -- Set focus to TCP so key strokes go there
     focusTCP()
     return
     
-  elseif modkeys & (MFXlist.MOD_SHIFT | MFXlist.MOD_ALT) == (MFXlist.MOD_SHIFT | MFXlist.MOD_ALT) then
+  elseif modkeys == (MFXlist.MOD_SHIFT | MFXlist.MOD_ALT) then
     -- Shift+Alt
     Msg("TODO! Left click over FX with Shift+Alt key!")
     -- Set focus to TCP so key strokes go there
     focusTCP()
     return
     
-  elseif modkeys & (MFXlist.MOD_SHIFT | MFXlist.MOD_CTRL) == (MFXlist.MOD_SHIFT | MFXlist.MOD_CTRL) then
+  elseif modkeys == (MFXlist.MOD_SHIFT | MFXlist.MOD_CTRL) then
     -- Shift+Ctrl
     Msg("TODO! Left click over FX with Shift+Ctrl key!")
     -- Set focus to TCP so key strokes go there
     focusTCP()
     return
     
-  elseif modkeys & (MFXlist.MOD_CTRL | MFXlist.MOD_ALT) == (MFXlist.MOD_CTRL | MFXlist.MOD_ALT) then
+  elseif modkeys == (MFXlist.MOD_CTRL | MFXlist.MOD_ALT) then
     -- Ctr+Alt+Left click on FX, toggle offline/online
     
     local isoffline = rpr.TrackFX_GetOffline(track, index-1)
     rpr.TrackFX_SetOffline(track, index-1, not isoffline)
     -- Set focus to TCP so key strokes go there
-    fcousTCP()
+    focusTCP()
     return
     
-  elseif modkeys & MFXlist.MOD_SHIFT == MFXlist.MOD_SHIFT then 
+  elseif modkeys == MFXlist.MOD_SHIFT then 
     -- Shift+Left click on FX, toggle enable/disable
     
     local endisabled = not rpr.TrackFX_GetEnabled(track, index-1)
@@ -1235,12 +1249,12 @@ local function handleLeftMBclick(mcap, mx, my)
     focusTCP()
     return
     
-  elseif modkeys & MFXlist.MOD_CTRL == MFXlist.MOD_CTRL then -- show/hide chain
+  elseif modkeys == MFXlist.MOD_CTRL then -- show/hide chain
     -- Ctrl+Left click on FX, toggle track FX Chain window with FX selected
     
     handleToggleWindow(track, index-1, 0)
     
-  elseif modkeys & MFXlist.MOD_ALT == MFXlist.MOD_ALT then -- delete
+  elseif modkeys == MFXlist.MOD_ALT then -- delete
     -- Alt+Left click on FX, delete FX
     
     rpr.TrackFX_Delete(track, index-1)
@@ -1265,7 +1279,7 @@ end -- insideResolution
 ------
 local mblprev, mbrprev -- global but local, used only in handleMouse
 
-local function    handleMouse()
+local function handleMouse()
   
   local mx, my = gfx.mouse_x, gfx.mouse_y
   
