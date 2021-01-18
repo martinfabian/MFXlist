@@ -13,6 +13,7 @@
 --   #         Julian Sander, https://forum.cockos.com/showthread.php?t=212174
 --   # Developed using ZeroBrane Studio as IDE, https://studio.zerobrane.com/
 
+-- TODO! Code clean up, menu clean up, general clean up...
 -- Done! BIG THING! Have to give focus back to arrange view, otherwise spacebar does not play! WTF? 
 --       There is some type of focus-steling going on. Click an FX, while its window is open, spacebar works as play
 --       But click again (on MFXlist) to close the floating window. Now spacebar does NOT play! WTF sorcery is this?
@@ -155,6 +156,8 @@ local MFXlist =
   
   ACT_ZOOMINVERT = 40111, -- View: Zoom in vertical
   ACT_ZOOMOUTVERT = 40112, -- View: Zoom out vertical
+  
+  ACT_FXBROWSERWINDOW = 40271, -- View: Show FX browser window
   
   CMD_FOCUSARRANGE = 0, -- SWS/BR: Focus arrange (_BR_FOCUS_ARRANGE_WND)
   CMD_FOCUSTRACKS = 0,  -- SWS/BR: Focus tracks (_BR_FOCUS_TRACKS)
@@ -878,6 +881,11 @@ local function showInfo(mx, my)
   rpr.ShowConsoleMsg(MFXlist.SCRIPT_NAME.." "..MFXlist.SCRIPT_VERSION..'\n')
   local authors = table.concat(MFXlist.SCRIPT_AUTHORS, ", ")
   rpr.ShowConsoleMsg(authors..", "..MFXlist.SCRIPT_YEAR..'\n')
+  rpr.ShowConsoleMsg("Dock: "..gfx.dock(-1)..", gfx.w: "..gfx.w..", gfx.h: "..gfx.h)
+  -- rpr.ShowConsoleMsg("TCP area (screen coords): "..x..", "..y..", "..w..", "..h)
+  rpr.ShowConsoleMsg("\nMFXlist header: 0, 0, "..gfx.w..", "..MFXlist.TCP_top) 
+  rpr.ShowConsoleMsg("\nMFXlist drawing area: 0, "..MFXlist.TCP_top..", "..gfx.w..", "..MFXlist.TCP_bot - MFXlist.TCP_top)
+  rpr.ShowConsoleMsg("\nMFXlist footer: 0, "..MFXlist.TCP_bot..", "..gfx.w..", "..gfx.h - MFXlist.TCP_bot)
   
 end -- showInfo
 ---------------------------------------
@@ -888,7 +896,7 @@ local function handleMenu(mcap, mx, my)
     menustr = menustr.." | (Setup 10)"
   end
   
-  MENU_SETUP10 = MFXlist.MENU_QUIT + 1 -- Only for debug!
+  local MENU_SETUP10 = MFXlist.MENU_QUIT + 1 -- Only for debug!
   
   gfx.x, gfx.y = mx, my
   local ret = gfx.showmenu(menustr)
@@ -1257,7 +1265,7 @@ end -- insideResolution
 ------
 local mblprev, mbrprev -- global but local, used only in handleMouse
 
-local function handleMouse()
+local function    handleMouse()
   
   local mx, my = gfx.mouse_x, gfx.mouse_y
   
@@ -1342,7 +1350,11 @@ local function handleMouse()
     
     mblprev = MFXlist.MB_LEFT 
     MFXlist.mbl_downx, MFXlist.mbl_downy = mx, my
-    MFXlist.down_object = {MFXlist.track_hovered, MFXlist.fx_hovered}
+    if MFXlist.track_hovered then
+      MFXlist.down_object = {MFXlist.track_hovered, MFXlist.fx_hovered}
+    else -- mouse down on header or footer
+      MFXlist.down_object = nil
+    end
     MFXlist.count_down = 0
     
   -- down now, down previously, maybe we are dragging
