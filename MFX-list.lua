@@ -789,7 +789,7 @@ local function drawDropIndicator()
   
 end -- drawDropIndicator
 -----------------------
-local function handleTracks()
+local function drawTracks()
   
   -- gfx.set(1, 1, 1)
   gfx.setfont(MFXlist.FONT_FXNAME)--, MFXlist.FONT_NAME1, MFXlist.FONT_SIZE1)
@@ -867,11 +867,8 @@ local function handleTracks()
       
     end
   end
-  
-  drawHeader()
-  drawFooter()
 
-end -- handleTracks
+end -- drawTracks
 -----------------------------------------
 -- Shows it in Reaper's console (for now)
 -- Not using Msg here, since we want this
@@ -1509,7 +1506,10 @@ local function initializeScript()
   gfx.drawstr(MFXlist.SCRIPT_NAME, 5, MFXlist.BLITBUF_HEADW, MFXlist.BLITBUF_HEADH) 
   
   gfx.dest = -1
-  handleTracks()
+  drawTracks()
+  drawHeader()
+  drawFooter()
+  
   focusTCP()
   
 end -- initializeScript
@@ -1523,7 +1523,10 @@ local function mfxlistMain()
   rpr.PreventUIRefresh(1)
 
   
-  handleTracks()
+  drawTracks()
+  drawHeader()
+  drawFooter()
+  
   local continue = handleMouse() 
   
   rpr.PreventUIRefresh(-1)
