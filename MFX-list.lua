@@ -41,7 +41,7 @@
 local string, table, math = string, table, math
 local rpr, gfx = reaper, gfx
 -----------------------------------------  Just for debugging
-local DO_DEBUG = false
+local DO_DEBUG = true
 local function Msg(str)
    if DO_DEBUG then rpr.ShowConsoleMsg(tostring(str).."\n") end
 end
