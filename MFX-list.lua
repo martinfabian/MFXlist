@@ -777,6 +777,14 @@ local function drawFooter()
   end
 
 end -- drawFooter
+----------------------------------------------------
+local function drawSelectedIndicator(ycoord, height)
+  
+  -- Msg("drawSelectedIndicator("..ycoord..", "..height..")")
+  gfx.set(1, 1, 1, 1)
+  gfx.line(gfx.w-2, ycoord + 1, gfx.w-2, ycoord + height - 2)
+  
+end -- drawSelectedIndicator
 ----------------------------------
 local function drawDropIndicator()
   
@@ -807,6 +815,7 @@ local function drawTracks()
     local trinfo = vistracks[i]
     local posy = trinfo.posy
     local height = trinfo.height
+    local selected = trinfo.selected
     local chainon = trinfo.enabled -- track FX chain enabled
     -- if the mouse is currently inside this track rect
     if MFXlist.mouse_y and posy <= MFXlist.mouse_y-drawy and MFXlist.mouse_y-drawy <= posy + height then
@@ -865,6 +874,10 @@ local function drawTracks()
       
       drawDropIndicator()
       
+    end
+    
+    if selected then 
+      drawSelectedIndicator(drawy + posy, height)
     end
   end
 
