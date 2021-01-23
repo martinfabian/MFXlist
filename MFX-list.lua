@@ -1,6 +1,6 @@
 -- @description FX list for Reaper left docker (MFX-list)
 -- @author M Fabian, inlcudes code by Edgemeal
--- @SCRIPT_version 0.0.1
+-- @SCRIPT_version 0.9.0
 -- @changelog
 --   Nothing yet, or rather... everything
 -- @link
