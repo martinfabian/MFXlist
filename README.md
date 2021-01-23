@@ -43,4 +43,4 @@ There is a known issue with focus stealing in certain cases. This means that som
 
 ## Unknown issues
 
-Please report to me. Posting in this thread will work.
+Please report to me. Posting in the MFXlist thread on teh Reaper forum (https://forum.cockos.com/showthread.php?p=2395407) will work.
