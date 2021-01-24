@@ -1341,5 +1341,13 @@ local function mfxlistMain()
   
 end -- mfxlistMain
 ------------------------------------------------ It all starts here, really
-initializeScript()
-mfxlistMain() -- run main loop
+
+-- Adding preset awareness here
+local function Init()
+  initializeScript()
+  mfxlistMain() -- run main loop
+end
+
+if not preset_file_init then 
+  Init()
+end
