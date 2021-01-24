@@ -1583,8 +1583,15 @@ local tracks = collectTracks()
 Msg(tprint(tracks))
 --]]
 
-initializeScript()
-mfxlistMain() -- run main loop
+-- Adding preset awareness here
+local function Init()
+  initializeScript()
+  mfxlistMain() -- run main loop
+end
+
+if not preset_file_init then 
+  Init()
+end
 
 --[[ Stuff on dockers and HWNDs
 https://forum.cockos.com/showthread.php?p=1507649#post1507649
