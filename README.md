@@ -41,6 +41,8 @@ Ideas are welcome. One thing that I am looking at is to have the possibility of 
 
 There is a known issue with focus stealing in certain cases. This means that sometimes MFXlist steals the keyboard input so that key strokes do not go to Reaper, so keyboard shortcuts do not work. Clicking somewhere in the arrange view or on the TCP fixes this. I know what the problem is, I am just not sure how to fix it without affecting other focus related things that currently do work.
 
+MFXlist does not work on Reaper v5 or earlier.
+
 ## Unknown issues
 
 Please report to me. Posting in the MFXlist thread on teh Reaper forum (https://forum.cockos.com/showthread.php?p=2395407) will work.
