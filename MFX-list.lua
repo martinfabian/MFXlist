@@ -104,13 +104,11 @@ local MFXlist =
   CLICK_RESOY = 10, 
   
   -- Right click menu 
-  MENU_STR = "Linear find last|Show first track|Show last track|Info|Quit",
+  MENU_STR = "Next dock|Info|Quit",
   MENU_FINDLEFTDOCK = 100, -- big number means "not used"
-  MENU_LINEARFINDLAST = 1,
-  MENU_SHOWFIRSTTCP = 2,
-  MENU_SHOWLASTTCP = 3,
-  MENU_SHOWINFO = 4,
-  MENU_QUIT = 5,
+  MENU_NEXTDOCK = 1,
+  MENU_SHOWINFO = 2,
+  MENU_QUIT = 3,
   
   -- Flag constants for TrackFX_Show(track, index, showFlag)
   FXCHAIN_HIDE = 0, 
@@ -136,7 +134,7 @@ local MFXlist =
   WIN_Y = 200,
   WIN_W = 200,
   WIN_H = 200,
-  LEFT_ARRANGEDOCKER = 512+1, -- 512 = left of arrange view, +1 == docked (not universally true)
+  DOCKER_NUM = 512+1, -- 512 = left of arrange view, +1 == docked (not universally true)
   
   -- Window class names to look for, I have no idea how or if this works on Mac/Linux
   -- CLASS_TRACKLISTWIN = "REAPERTrackListWindow", -- this is the arrange view where the media items live
@@ -232,7 +230,7 @@ local function setupForTesting(num)
   
   addTracksForTesting(num)
   
-  --gfx.dock(MFXlist.LEFT_ARRANGEDOCKER, 0, 0, 0, 0)
+  --gfx.dock(MFXlist.DOCKER_NUM, 0, 0, 0, 0)
   
   rpr.PreventUIRefresh(-1)
   rpr.TrackList_AdjustWindows(true)
@@ -480,13 +478,41 @@ local function findLeftDock()
       Msg("REAPER_dock #"..docknumber..", left: "..left..", top: "..top..", right: "..right..", bottom: "..bottom)
       if left == mleft then -- this should be the left docker?
         -- then what? how to get its number? do they come in order?
-        --MFXlist.LEFT_ARRANGEDOCKER = 2^docknumber + 1
+        --MFXlist.DOCKER_NUM = 2^docknumber + 1
       end
       docknumber = docknumber + 1
     --end
   end
   
 end -- findLeftDock
+---------------------------------------------
+-- This is the next best thing we can do, add
+-- menu option to switch to the next docker
+local function nextDocker(bits)
+  
+  local masked = bits & 0xFFFF
+  local shifted = masked >> 1
+  if shifted == 0 then
+    shifted = 0x8001
+  else
+    shifted = shifted | 0x01
+  end
+  return shifted
+  
+end -- nextDocker
+------------------------------
+local function switchDocker()
+  
+  Msg("Switching from: "..MFXlist.DOCKER_NUM)
+  MFXlist.DOCKER_NUM = nextDocker(MFXlist.DOCKER_NUM)
+  Msg("--> "..MFXlist.DOCKER_NUM)
+
+
+  gfx.quit()
+  gfx.clear = MFXlist.COLOR_EMPTYSLOT[1] * 255 + MFXlist.COLOR_EMPTYSLOT[2] * 255 * 256 + MFXlist.COLOR_EMPTYSLOT[3] * 255 * 65536
+  gfx.init(MFXlist.SCRIPT_NAME, MFXlist.WIN_W, MFXlist.WIN_H, MFXlist.DOCKER_NUM, MFXlist.WIN_X, MFXlist.WIN_Y)
+  
+end -- switchDocker
 -----------------------------------------
 -- Seems that the only way to affect last
 -- touched track by scripting is to do:
@@ -914,6 +940,8 @@ local function handleMenu(mcap, mx, my)
     return ret
   elseif ret == MFXlist.MENU_SHOWINFO then
     showInfo(mx, my)
+  elseif ret == MFXlist.MENU_NEXTDOCK then
+    switchDocker()
   elseif ret == MENU_SETUP10 then
     setupForTesting(10)
   elseif ret == MFXlist.MENU_SHOWFIRSTTCP then
@@ -1449,7 +1477,7 @@ end -- exitScript
 local function openWindow()
   
   -- Dock state - not valid for Reaper v4 or earlier
-  local dockstate = MFXlist.LEFT_ARRANGEDOCKER
+  local dockstate = MFXlist.DOCKER_NUM
   if rpr.HasExtState(MFXlist.SCRIPT_NAME, "dock") then 
       local extstate = rpr.GetExtState(MFXlist.SCRIPT_NAME, "dock")
       dockstate = tonumber(extstate)
