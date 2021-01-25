@@ -416,10 +416,7 @@ end -- nextDocker
 ------------------------------
 local function switchDocker()
   
-  Msg("Switching from: "..MFXlist.DOCKER_NUM)
   MFXlist.DOCKER_NUM = nextDocker(MFXlist.DOCKER_NUM)
-  Msg("--> "..MFXlist.DOCKER_NUM)
-
 
   gfx.quit()
   gfx.clear = MFXlist.COLOR_EMPTYSLOT[1] * 255 + MFXlist.COLOR_EMPTYSLOT[2] * 255 * 256 + MFXlist.COLOR_EMPTYSLOT[3] * 255 * 65536
