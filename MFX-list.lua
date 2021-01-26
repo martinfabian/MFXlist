@@ -566,8 +566,10 @@ local function getFirstTCPTrackBinary()
       return track, index + 1
     end      
   end
-
-  assert(nil, "getFirstTCPTrackBinary: Should never get here!")
+  
+  -- Are all tracks hidden (height = 0) and first track has negative y-coord? (issue #18)
+  -- Then there are no visible tracks, what do we do? Pretend that there are no tracks!
+  return nil, -1
   
 end -- getFirstTCPTrackBinary
 ---------------------------------------------------------------------------
