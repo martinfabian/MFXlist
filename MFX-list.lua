@@ -659,6 +659,12 @@ local function getFirstTCPTrackBinary()
     end      
   end
   
+  -- Are all tracks hidden (height = 0) and first track has negative y-coord? (issue #18)
+  -- Then there are no visible tracks, what do we do? Pretend that there are no tracks!
+  return nil, -1
+  
+  --[[  -- The nasty bug was the tcpgap issue (#12), this was resolved
+        -- The all trackshidden issue (#18), was resolved by the above return
   -- Nasty bug somewhere...
   local track = rpr.GetTrack(CURR_PROJ, 0)
   local posy, height = getTrackPosAndHeight(track)
@@ -666,7 +672,7 @@ local function getFirstTCPTrackBinary()
   local master = rpr.GetMasterTrack(CURR_PROJ)
   local mposy, mheight = getTrackPosAndHeight(master)
   assert(nil, "getFirstTCPTrackBinary: Should never get here! * Master track: "..mvis..", "..mposy..", "..mheight.." * First track: "..posy..", "..height)
-  
+  --]]
 end -- getFirstTCPTrackBinary
 ---------------------------------------------------------------------------
 -- Does a binary search, halving and halving until it finds the right track
