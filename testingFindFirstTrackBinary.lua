@@ -42,8 +42,9 @@ local function initRandomGeneration()
   math.randomseed( tonumber(tostring(os.time()):reverse():sub(1,6)) )
   
 end -- initRandomGeneration
--------------------------------------
-local function generateRandomSetup()
+--------------------------------------------------
+-- Allow to setup with fixed track height (like 0)
+local function generateRandomSetup(fixedheight)
   
   initRandomGeneration()
   
@@ -66,7 +67,7 @@ local function generateRandomSetup()
     local track = {}
     track.name = "Track "..i
     track.posy = posy
-    track.height = math.random(0, 200)
+    track.height = (fixedheight and fixedheight or math.random(0, 200))
     posy = posy + track.height
     table.insert(setup.tracks, track)
   end
@@ -200,7 +201,7 @@ local ch2 = "/"
 local ch = ch1
 io.write(ch2)
 repeat
-  setup = generateRandomSetup()
+  setup = generateRandomSetup(0) -- 0 here means "all tracks hidden, height == 0
   -- printSetup(false)
 
   status, track, index = pcall(getFirstTCPTrackBinary)
