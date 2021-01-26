@@ -1,6 +1,6 @@
 -- @description FX list for Reaper left docker (MFX-list)
 -- @author M Fabian, inlcudes code by Edgemeal
--- @SCRIPT_version 0.9.2
+-- @SCRIPT_version 0.9.3
 -- @changelog
 --   Nothing yet, or rather... everything
 -- @link
@@ -53,7 +53,7 @@ local MFXlist =
   FONT_INVFLAG = 0x56000000,    -- invert  
   
   -- Script specific constants, from here below change only if you really know what you are doing
-  SCRIPT_VERSION = "v0.9.2",
+  SCRIPT_VERSION = "v0.9.3",
   SCRIPT_NAME = "MFX-list",
   SCRIPT_AUTHORS = {"M Fabian"},
   SCRIPT_YEAR = "2020-2021",
@@ -1221,17 +1221,18 @@ local function handleMouse()
       local strack = MFXlist.drag_object and MFXlist.drag_object[1] or nil  -- source track
       local ttrack = MFXlist.track_hovered  -- target track
       if strack and ttrack then
-        local sfxid = MFXlist.drag_object[2]  -- source fx id
+        local sfxid = MFXlist.drag_object[2]  -- source fx id, can be nil
         local tfxid = MFXlist.fx_hovered      -- target fxid, can be nil
         
         -- Handle the drop
-        if not tfxid then
-          tfxid = rpr.TrackFX_GetCount(ttrack) + 1
+        if sfxid then
+          if not tfxid then
+            tfxid = rpr.TrackFX_GetCount(ttrack) + 1
+          end
+          -- If any combination of Ctrl is held down when dropping, then it is a copy
+          local tomove = not (gfx.mouse_cap & MFXlist.MOD_CTRL == MFXlist.MOD_CTRL)
+          rpr.TrackFX_CopyToTrack(strack, sfxid-1, ttrack, tfxid-1, tomove)
         end
-        -- If any combination of Ctrl is held down when dropping, then it is a copy
-        local tomove = not (gfx.mouse_cap & MFXlist.MOD_CTRL == MFXlist.MOD_CTRL)
-        rpr.TrackFX_CopyToTrack(strack, sfxid-1, ttrack, tfxid-1, tomove)
-        
       end
       
       -- Reset drag info
@@ -1266,8 +1267,13 @@ local function handleMouse()
         if DO_DEBUG then
           local track = MFXlist.drag_object[1]
           local fxid = MFXlist.drag_object[2]
-          local _, tname = rpr.GetTrackName(track)
-          local _, fxname = rpr.TrackFX_GetFXName(track, fxid-1, "")
+          if not track or not fxid then
+            Msg("track: "..(track and "valid" or "nil")..", fxid: "..(fxid and fxid or "nil"))
+          else
+            local _, tname = rpr.GetTrackName(track)
+            local _, fxname = rpr.TrackFX_GetFXName(track, fxid-1, "") 
+            Msg("Possible drag start: "..tname..", "..fxname)
+          end
         end -- DO_DEBUG
         
       end
