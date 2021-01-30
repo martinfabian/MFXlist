@@ -788,7 +788,7 @@ local function drawTracks()
         
       end
       -- if dragging and are on top of this FX, show drop indicator above it
-      if insidetrack and MFXlist.drag_object and MFXlist.fx_hovered == i then
+      if insidetrack and MFXlist.drag_object and MFXlist.drag_object[2] and MFXlist.fx_hovered == i then
         
         drawDropIndicator()
         
@@ -797,7 +797,7 @@ local function drawTracks()
       
     end
     -- if dragging and not hovering any FX, draw drop indicator at end of FX chain
-    if insidetrack and MFXlist.drag_object and not MFXlist.fx_hovered then
+    if insidetrack and MFXlist.drag_object and MFXlist.drag_object[2] and not MFXlist.fx_hovered then
       
       drawDropIndicator()
       
