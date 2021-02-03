@@ -1657,7 +1657,7 @@ Msg(tprint(tracks))
 --]]
 
 -- Adding preset awareness here
-local function Init()
+function Init()
   initializeScript()
   mfxlistMain() -- run main loop
 end
