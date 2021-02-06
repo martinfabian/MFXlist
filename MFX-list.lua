@@ -24,6 +24,9 @@ local MFXlist =
   -- user settable stuff
   COLOR_EMPTYSLOT = {40/255, 40/255, 40/255},
   COLOR_FXHOVERED = {1, 1, 0}, 
+  COLOR_DROPMOVE = {0, 0, 1},
+  COLOR_DROPCOPY = {0, 1, 0},
+  
   --[[ not used for now
   COLOR_BLACK   = {012/255, 012/255, 012/255},
   COLOR_VST     = {},
@@ -758,9 +761,9 @@ end -- drawSelectedIndicator
 local function drawDropIndicator()
   
   if gfx.mouse_cap & MFXlist.MOD_CTRL == MFXlist.MOD_CTRL then
-    gfx.set(0, 0, 1) -- blue indicates copy
+    gfx.set(MFXlist.COLOR_DROPCOPY[1], MFXlist.COLOR_DROPCOPY[2], MFXlist.COLOR_DROPCOPY[3])
   else
-    gfx.set(0, 1, 0) -- green indicates move
+    gfx.set(MFXlist.COLOR_DROPMOVE[1], MFXlist.COLOR_DROPMOVE[2], MFXlist.COLOR_DROPMOVE[3])
   end
   gfx.line(10, gfx.y, gfx.w-10, gfx.y)
   
