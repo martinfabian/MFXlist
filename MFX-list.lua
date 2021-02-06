@@ -106,7 +106,7 @@ local MFXlist =
   DOCKER_NUM = 512+1, -- 512 = left of arrange view, +1 == docked (not universally true)
   
   -- "Win" for Windows, "Mac" for Mac, "Linux" for Linux, determined when initializing
-  WHAT_OS = nil,
+  WHAT_OS = nil, -- On Mac the y-coords go the other direction
   
   -- Window class names to look for, I have no idea how or if this works on Mac/Linux
   -- CLASS_TRACKLISTWIN = "REAPERTrackListWindow", -- this is the arrange view where the media items live
@@ -159,8 +159,7 @@ local MFXlist =
   
   footer_text = "MFX-list", -- changes after initializing, shows name of currently hovered track
   header_text = "MFX-list", -- this doesn't really change after initialzing, but could if useful
-  
-  is_mac = nil, -- true if we are on Mac (where screen y-coords need to be swapped)
+
 }
 
 local CURR_PROJ = 0
@@ -1191,7 +1190,8 @@ local function handleLeftMBclick(mcap, mx, my)
       focusTCP()
       return
     else
-      assert(nil, "handleLeftMB (1): should not get here!")
+      -- assert(nil, "handleLeftMB (1): should not get here!")
+      Msg("Left click track with Win/Ctrl mod key not supported")
     end
     return
   end
@@ -1255,7 +1255,8 @@ local function handleLeftMBclick(mcap, mx, my)
     return
     
   else
-    assert(nil, "handleLeftMB (2): should not get here!")
+    -- assert(nil, "handleLeftMB (2): should not get here!")
+    Msg("Left click FX with Win/Ctrl mod key not supported")
   end
   
 end -- handleLeftMB
