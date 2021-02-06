@@ -49,13 +49,14 @@ end
 -- Variables with underscore are global
 -- All caps denotes constants, do not assign to these in the code!
 -- Non-constants are used to communicate between different parts of the code
-local MFXlist = 
+MFXlist = 
 { 
   -- user settable stuff
   COLOR_EMPTYSLOT = {40/255, 40/255, 40/255},
   COLOR_FXHOVERED = {1, 1, 0}, 
   COLOR_DROPMOVE = {0, 0, 1},
   COLOR_DROPCOPY = {0, 1, 0},
+  COLOR_SELECTEDTRACK = {1, 1, 1},
   
   --[[ not used for now
   COLOR_BLACK   = {012/255, 012/255, 012/255},
@@ -195,7 +196,7 @@ local MFXlist =
   header_text = "MFX-list", -- this doesn't really change after initialzing, but could if useful
 
 }
-
+local MFXlist = MFXlist -- MFXlist has to be global for preswet to work, here it becmoes local
 local CURR_PROJ = 0
 ------------------------------------------------ These are for testing and debuggin
 local function addTracksForTesting(num)
@@ -867,7 +868,7 @@ end -- drawFooter
 local function drawSelectedIndicator(ycoord, height)
   
   -- Msg("drawSelectedIndicator("..ycoord..", "..height..")")
-  gfx.set(1, 1, 1, 1)
+  gfx.set(MFXlist.COLOR_SELECTEDTRACK[1], MFXlist.COLOR_SELECTEDTRACK[2], MFXlist.COLOR_SELECTEDTRACK[3], 1)
   gfx.line(gfx.w-2, ycoord + 1, gfx.w-2, ycoord + height - 2)
   
 end -- drawSelectedIndicator
