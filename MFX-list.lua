@@ -1195,7 +1195,7 @@ local function handleLeftMBclick(mcap, mx, my)
       return
     else
       -- assert(nil, "handleLeftMB (1): should not get here!")
-      Msg("Left click track with Win/Ctrl mod key not supported")
+      -- Msg("Left click track with Win/Ctrl mod key not supported")
     end
     return
   end
@@ -1260,7 +1260,7 @@ local function handleLeftMBclick(mcap, mx, my)
     
   else
     -- assert(nil, "handleLeftMB (2): should not get here!")
-    Msg("Left click FX with Win/Ctrl mod key not supported")
+    -- Msg("Left click FX with Win/Ctrl mod key not supported")
   end
   
 end -- handleLeftMB
