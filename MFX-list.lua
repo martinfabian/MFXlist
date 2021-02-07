@@ -58,6 +58,9 @@ MFXlist =
   COLOR_DROPCOPY = {0, 1, 0},
   COLOR_SELECTEDTRACK = {1, 1, 1},
   
+  -- Determines whether to show FX type (JS, VST, etc) in the name
+  SHOW_FXTYPE = false, 
+  
   --[[ not used for now
   COLOR_BLACK   = {012/255, 012/255, 012/255},
   COLOR_VST     = {},
@@ -67,6 +70,7 @@ MFXlist =
   --]]
   FX_DISABLEDA = 0.3, -- fade of name for disabled FX
   FX_OFFLINEDA = 0.1, -- even fainter for offlined FX
+  
   
   -- Delay for return of focus during mouse wheel
   FOCUS_DELAY = 10, 
@@ -580,7 +584,7 @@ local function setLastTouchedTrack(track)
 end -- setLastTouchedTrack
 --------------------------------------------------------
 function split(str, sep)
-    local sep, fields = sep, {}
+    local fields = {}
     local pattern = str.format("([^%s]+)", sep)
     str:gsub(
         pattern,
@@ -591,8 +595,6 @@ function split(str, sep)
     return fields
 end
 --------------------------------------------------------
--- TODO: Move this
-local DISPLAY_FX_TYPE_IN_LABEL = false
 local function formatFXNameAndType(fxname, fxtype)
     local segments = split(fxname, "/")
     local trimmed_fx_name = segments[#segments]
@@ -600,13 +602,25 @@ local function formatFXNameAndType(fxname, fxtype)
     -- Strip parenthesized text
     trimmed_fx_name = trimmed_fx_name:gsub("%([^()]*%)", "")
 
+  --[[ -- Something is wronmg with this claim, comes from PR #25, for now add "xx" to make sure the if never 
     -- JSFX doesn't have "JS:" appended to it like "VST" does, so let's fake-append it for uniformity and easier if/else logic
-    if fxtype == "JS:" then
+    if fxtype == "xxJS:" then
         trimmed_fx_name = "JS: " .. trimmed_fx_name
     end
+  --]]
+  
+  -- For video processor we remove trailing " -- video processor"
+  if fxtype == "VID:" then
+    trimmed_fx_name = trimmed_fx_name:gsub(" -- video processor", "")
+  end
 
-    if not DISPLAY_FX_TYPE_IN_LABEL then
+    if not MFXlist.SHOW_FXTYPE then
         trimmed_fx_name = trimmed_fx_name:gsub(MFXlist.MATCH_UPTOCOLON .. "%s", "") -- up to colon and then space, replace by nothing
+    else -- we are to show the FX type, VST:, JS:, VID:, so dont remove anything but add "VID: " where appropriate
+      if fxtype == "VID:" then
+        -- remove " -- video processor", add "VID: "
+        trimmed_fx_name = "VID: "..trimmed_fx_name
+      end
     end
 
     return trimmed_fx_name
