@@ -45,6 +45,7 @@ MFXlist.COLOR_EMPTYSLOT = {60/255, 0, 60/255}
 -- MFXlist.COLOR_DROPMOVE = {0, 0, 1},
 -- MFXlist.COLOR_DROPCOPY = {0, 1, 0},
 MFXlist.COLOR_SELECTEDTRACK = {1, 1, 0}
+-- MFXlist.SHOW_FXTYPE = false, -- Show FX type prefix, JS:, VST:, VSTi:, VID:
 -- MFXlist.FX_DISABLEDA = 0.3, -- fade of name for disabled FX
 -- MFXlist.FX_OFFLINEDA = 0.1, -- even fainter for offlined FX
 -- MFXlist.FONT_NAME1 = "Arial",
