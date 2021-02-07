@@ -1772,7 +1772,6 @@ end
 if not preset_file_init then 
   Init()
 end
-<<<<<<< HEAD
 
 --[[ Stuff on dockers and HWNDs
 https://forum.cockos.com/showthread.php?p=1507649#post1507649
@@ -1784,5 +1783,4 @@ https://forum.cockos.com/showthread.php?t=207081
 https://forum.cockos.com/showthread.php?p=2203603
 https://forum.cockos.com/showthread.php?t=221174
 --]]
-=======
->>>>>>> b09fe0f (Strip preceding slash words from FX name using formatting function)
+
