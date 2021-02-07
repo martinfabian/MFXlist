@@ -583,7 +583,7 @@ local function setLastTouchedTrack(track)
   
 end -- setLastTouchedTrack
 --------------------------------------------------------
-function split(str, sep)
+local function split(str, sep)
     local fields = {}
     local pattern = str.format("([^%s]+)", sep)
     str:gsub(
@@ -602,9 +602,9 @@ local function formatFXNameAndType(fxname, fxtype)
     -- Strip parenthesized text
     trimmed_fx_name = trimmed_fx_name:gsub("%([^()]*%)", "")
 
-  --[[ -- Something is wronmg with this claim, comes from PR #25, for now add "xx" to make sure the if never 
+  --[[ -- Something is wronmg with this claim, comes from PR #25
     -- JSFX doesn't have "JS:" appended to it like "VST" does, so let's fake-append it for uniformity and easier if/else logic
-    if fxtype == "xxJS:" then
+    if fxtype == "JS:" then
         trimmed_fx_name = "JS: " .. trimmed_fx_name
     end
   --]]
