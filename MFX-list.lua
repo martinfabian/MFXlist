@@ -489,6 +489,23 @@ local function setLastTouchedTrack(track)
   
 end -- setLastTouchedTrack
 --------------------------------------------------------
+function split(str, sep)
+    local sep, fields = sep, {}
+    local pattern = str.format("([^%s]+)", sep)
+    str:gsub(
+        pattern,
+        function(c)
+            fields[#fields + 1] = c
+        end
+    )
+    return fields
+end
+--------------------------------------------------------
+local function formatFXNameAndType(fxname, fxtype)
+    local segments = split(fxname, "/")
+    return fxtype .. " " .. segments[#segments]
+end
+--------------------------------------------------------
 local function collectFX(track)
   assert(track, "collectFX: invalid parameter - track")
   
@@ -498,8 +515,7 @@ local function collectFX(track)
   for i = 1, numfx do
     local _, fxname = rpr.TrackFX_GetFXName(track, i-1, "")
     local fxtype = fxname:match(MFXlist.MATCH_UPTOCOLON) or "VID:"  -- Video processor FX don't have prefixes
-    fxname = fxname:gsub(MFXlist.MATCH_UPTOCOLON.."%s", "") -- up to colon and then space, replace by nothing
-    fxname = fxname:gsub("%([^()]*%)","")
+    fxname = formatFXNameAndType(fxname, fxtype)
     local enabled =  rpr.TrackFX_GetEnabled(track, i-1)
     local offlined = rpr.TrackFX_GetOffline(track, i-1)
     table.insert(fxtab, {fxname = fxname, fxtype = fxtype, enabled = enabled, offlined = offlined}) -- confusing <key, value> pairs here, but it works
