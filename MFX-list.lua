@@ -591,9 +591,25 @@ function split(str, sep)
     return fields
 end
 --------------------------------------------------------
+-- TODO: Move this
+local DISPLAY_FX_TYPE_IN_LABEL = false
 local function formatFXNameAndType(fxname, fxtype)
     local segments = split(fxname, "/")
-    return fxtype .. " " .. segments[#segments]
+    local trimmed_fx_name = segments[#segments]
+
+    -- Strip parenthesized text
+    trimmed_fx_name = trimmed_fx_name:gsub("%([^()]*%)", "")
+
+    -- JSFX doesn't have "JS:" appended to it like "VST" does, so let's fake-append it for uniformity and easier if/else logic
+    if fxtype == "JS:" then
+        trimmed_fx_name = "JS: " .. trimmed_fx_name
+    end
+
+    if not DISPLAY_FX_TYPE_IN_LABEL then
+        trimmed_fx_name = trimmed_fx_name:gsub(MFXlist.MATCH_UPTOCOLON .. "%s", "") -- up to colon and then space, replace by nothing
+    end
+
+    return trimmed_fx_name
 end
 --------------------------------------------------------
 local function collectFX(track)
