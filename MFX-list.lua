@@ -59,7 +59,7 @@ MFXlist =
   COLOR_SELECTEDTRACK = {1, 1, 1},
   
   -- Determines whether to show FX type (JS, VST, etc) in the name
-  SHOW_FXTYPE = false, 
+  SHOW_FXTYPE = true, 
   
   --[[ not used for now
   COLOR_BLACK   = {012/255, 012/255, 012/255},
@@ -79,8 +79,8 @@ MFXlist =
   FONT_NAME2 = "Courier New",
   FONT_SIZE1 = 14,
   FONT_SIZE2 = 16,
-  FONT_FXNAME = 1,
-  FONT_FXBOLD = 2,
+  FONT_FXNAME = 14,
+  FONT_FXBOLD = 15,
   FONT_HEADER = 16,
   FONT_BOLDFLAG = 0x42000000,   -- bold
   FONT_ITFLAG = 0x49000000,     -- italics
@@ -136,6 +136,7 @@ MFXlist =
   
   -- For matching and shrinking FX names
   MATCH_UPTOCOLON = "(.-:)",
+  MATCH_UPTOSLASH = "(.-/)",
   
   -- Nondocked window size, and docker address (overridden from EXTSTATE if such exists)
   WIN_X = 1000,
@@ -595,36 +596,54 @@ local function split(str, sep)
     return fields
 end
 --------------------------------------------------------
-local function formatFXNameAndType(fxname, fxtype)
-    local segments = split(fxname, "/")
-    local trimmed_fx_name = segments[#segments]
+local function formatFXNameAndType(fxname, fxtype, fxprefix)
 
-    -- Strip parenthesized text
-    trimmed_fx_name = trimmed_fx_name:gsub("%([^()]*%)", "")
-
-  --[[ -- Something is wronmg with this claim, comes from PR #25
-    -- JSFX doesn't have "JS:" appended to it like "VST" does, so let's fake-append it for uniformity and easier if/else logic
-    if fxtype == "JS:" then
-        trimmed_fx_name = "JS: " .. trimmed_fx_name
+  local trimmed_fx_name = fxname
+  if fxtype == 2 then -- JS
+    -- local segments = split(fxname, "/")
+    -- trimmed_fx_name = segments[#segments]
+    local segment = fxname:match(MFXlist.MATCH_UPTOSLASH)
+    if segment and segment:len() >= 5 then
+      trimmed_fx_name = fxname:gsub(MFXlist.MATCH_UPTOSLASH, "")
     end
-  --]]
-  
+  end
+
+  -- Strip parenthesized text
+  trimmed_fx_name = trimmed_fx_name:gsub("%([^()]*%)", "")
+
   -- For video processor we remove trailing " -- video processor"
-  if fxtype == "VID:" then
+  if fxtype == 6 then
     trimmed_fx_name = trimmed_fx_name:gsub(" -- video processor", "")
   end
 
-    if not MFXlist.SHOW_FXTYPE then
-        trimmed_fx_name = trimmed_fx_name:gsub(MFXlist.MATCH_UPTOCOLON .. "%s", "") -- up to colon and then space, replace by nothing
-    else -- we are to show the FX type, VST:, JS:, VID:, so dont remove anything but add "VID: " where appropriate
-      if fxtype == "VID:" then
-        -- remove " -- video processor", add "VID: "
-        trimmed_fx_name = "VID: "..trimmed_fx_name
-      end
-    end
-
-    return trimmed_fx_name
+  if MFXlist.SHOW_FXTYPE then
+    trimmed_fx_name = fxprefix..trimmed_fx_name
+  end
+  
+  return trimmed_fx_name
+  
 end
+---------------------------------------------------
+-- If this fx has a prefix in its name, return that
+-- else, generate a prefix given the fxtype number
+local function getFXPrefix(fxname, fxtype)
+  
+  local prefix = fxname:match(MFXlist.MATCH_UPTOCOLON)
+  if prefix and prefix:len() <= 5 then -- 5, because "VSTi:" is 5 long
+    return prefix, fxname:gsub(MFXlist.MATCH_UPTOCOLON.."%s", "") -- remove the prefix
+  end
+  
+  if fxtype == 2 then
+    return "JS:", fxname
+  elseif fxtype == 3 then
+    return "VST:", fxname
+  elseif fxtype == 6 then
+    return "VID:", fxname
+  end
+  
+  return "", fxname
+
+end -- getFXPrefix 
 --------------------------------------------------------
 local function collectFX(track)
   assert(track, "collectFX: invalid parameter - track")
@@ -634,11 +653,15 @@ local function collectFX(track)
   local numfx = rpr.TrackFX_GetCount(track)
   for i = 1, numfx do
     local _, fxname = rpr.TrackFX_GetFXName(track, i-1, "")
-    local fxtype = fxname:match(MFXlist.MATCH_UPTOCOLON) or "VID:"  -- Video processor FX don't have prefixes
-    fxname = formatFXNameAndType(fxname, fxtype)
+    local fxtype = rpr.TrackFX_GetIOSize(track, i-1) -- This gets the type as a number
+    --fxname:match(MFXlist.MATCH_UPTOCOLON) or "VID:"  -- Video processor FX don't have prefixes
+    local fxprefix
+    fxprefix, fxname = getFXPrefix(fxname, fxtype)
+    --if fxtype == 6 then Msg("fxprefix: "..fxprefix..", fxname: "..fxname) end
+    fxname = formatFXNameAndType(fxname, fxtype, fxprefix)
     local enabled =  rpr.TrackFX_GetEnabled(track, i-1)
     local offlined = rpr.TrackFX_GetOffline(track, i-1)
-    table.insert(fxtab, {fxname = fxname, fxtype = fxtype, enabled = enabled, offlined = offlined}) -- confusing <key, value> pairs here, but it works
+    table.insert(fxtab, {fxname = fxname, fxtype = fxtype, fxprefix = fxprefix, enabled = enabled, offlined = offlined}) -- confusing <key, value> pairs here, but it works
   end
   return fxtab
 end
