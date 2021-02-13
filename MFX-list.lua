@@ -29,7 +29,7 @@ MFXlist =
   COLOR_SELECTEDTRACK = {1, 1, 1},
   
   -- Determines whether to show FX type (JS, VST, etc) in the name
-  SHOW_FXTYPE = true, 
+  SHOW_FXTYPE = false, 
   
   --[[ not used for now
   COLOR_BLACK   = {012/255, 012/255, 012/255},
@@ -82,10 +82,10 @@ MFXlist =
   CLICK_RESOY = 10, 
   
   -- Right click menu 
-  MENU_STR = "Next dock|Info|Quit",
-  MENU_NEXTDOCK = 1,
-  MENU_SHOWINFO = 2,
-  MENU_QUIT = 3,
+  MENU_STR = "Info|Quit",
+  MENU_SHOWINFO = 1,
+  MENU_QUIT = 2,
+  MENU_QUICKFX = {"ReaEQ", "ReaComp", "ReaFIR", "ReaDelay"}, -- To appear on right-click menu
   
   -- Flag constants for TrackFX_Show(track, index, showFlag)
   FXCHAIN_HIDE = 0, 
@@ -289,6 +289,24 @@ local function initSWSCommands()
   MFXlist.CMD_SCROLLTCPUP = rpr.NamedCommandLookup("_XENAKIOS_TVPAGEUP")
   
 end 
+------------------------------------------------------
+local function initMenu()
+  
+  MFXlist.MENU_STR = "Show info|Quit"
+  MFXlist.MENU_SHOWINFO = 1
+  MFXlist.MENU_QUIT = 2
+  
+  if MFXlist.MENU_QUICKFX and #MFXlist.MENU_QUICKFX > 0 then
+    
+    MFXlist.MENU_STR = table.concat(MFXlist.MENU_QUICKFX, "|").."||"..MFXlist.MENU_STR
+    
+    local fxnum = #MFXlist.MENU_QUICKFX 
+    MFXlist.MENU_SHOWINFO = fxnum + 1
+    MFXlist.MENU_QUIT = fxnum + 2
+    
+  end
+  
+end -- initMenu
 ------------------------------------------------------
 -- If given the command ID for alternative FX browser
 -- replace that command ID by what Reaper returns for it
@@ -966,6 +984,18 @@ local function handleMenu(mcap, mx, my)
     switchDocker()
   elseif ret == MENU_SETUP10 then
     setupForTesting(10)
+  elseif 0 < ret and ret < MFXlist.MENU_SHOWINFO then
+    
+    local track = MFXlist.track_hovered
+    local fxname = MFXlist.MENU_QUICKFX[ret]
+    
+    if DO_DEBUG then
+      local _, trackname = rpr.GetTrackName(track)
+      Msg("return: "..ret..", FX: "..fxname..", track: "..trackname)
+    end
+    
+    rpr.TrackFX_AddByName(track, fxname, false, -10000)
+  --[[
   elseif ret == MFXlist.MENU_SHOWFIRSTTCP then
     local startt = rpr.time_precise()
     local track, idx = getFirstTCPTrackBinary()
@@ -986,6 +1016,7 @@ local function handleMenu(mcap, mx, my)
     Msg("Last visible track (lin): "..lidx.." ("..endt-startt..")")
   elseif ret == MFXlist.MENU_FINDLEFTDOCK then
     findLeftDock()
+  --]]
   end
   
   return ret
@@ -1541,6 +1572,7 @@ local function initializeScript()
 
   -- initSWSCommands()
   initCommands()
+  initMenu()
   
   local cx, cy = gfx.screentoclient(x, y)
   MFXlist.TCP_top = cy
