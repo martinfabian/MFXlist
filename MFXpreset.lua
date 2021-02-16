@@ -56,8 +56,8 @@ MFXlist.COLOR_SELECTEDTRACK = {1, 1, 0}
 -- MFXlist.SLOT_HEIGHT = 13 -- pixels high
 -- MFXlist.ALT_FXBROWSER = nil -- Alternative FX browswer, put command ID here
 	-- These are the command IDs on my machine
-    -- "_RS490460a16d7e7bb0285ccb1891b67f8f59593a61", -- Quick Adder
-    -- "_RS36fe8a223d7ec08e45d4e8569c9bc15b9e417dfa", -- Fast FX finder
+    -- "_RS490460a16d7e7bb0285ccb1891b67f8f59593a61" -- Quick Adder
+    -- "_RS36fe8a223d7ec08e45d4e8569c9bc15b9e417dfa" -- Fast FX finder
 -------------------------------------------------- END OF USER CONFIG AREA 2/2
 
 -- RUN -------------------------------------------------------------------
