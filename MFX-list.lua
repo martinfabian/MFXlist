@@ -378,24 +378,6 @@ local function initSWSCommands()
   
 end 
 ------------------------------------------------------
-local function initMenu()
-  
-  MFXlist.MENU_STR = "Show info|Quit"
-  MFXlist.MENU_SHOWINFO = 1
-  MFXlist.MENU_QUIT = 2
-  
-  if MFXlist.MENU_QUICKFX and #MFXlist.MENU_QUICKFX > 0 then
-    
-    MFXlist.MENU_STR = table.concat(MFXlist.MENU_QUICKFX, "|").."||"..MFXlist.MENU_STR
-    
-    local fxnum = #MFXlist.MENU_QUICKFX 
-    MFXlist.MENU_SHOWINFO = fxnum + 1
-    MFXlist.MENU_QUIT = fxnum + 2
-    
-  end
-  
-end -- initMenu
-------------------------------------------------------
 -- If given the command ID for alternative FX browser
 -- replace that command ID by what Reaper returns for it
 -- Open the browser to get its hwnd and title 
@@ -1057,6 +1039,47 @@ local function drawTracks()
   end
 
 end -- drawTracks
+-----------------------------------------------------------
+-- Toggle open/close FX window (wtype == 2 for floating)
+-- index is here 0-based!
+-- wtype is 0 for FX chain window, 2 for floating FX window
+local function handleToggleWindow(track, index, wtype)
+  
+  local openclose = rpr.TrackFX_GetOpen(track, index) and wtype or wtype + 1 -- 0,2: to close, 1,3: to open
+  
+  if nil then -- DO_DEBUG then
+    local _, tname = rpr.GetTrackName(track)
+    local _, fxname = rpr.TrackFX_GetFXName(track, index, "")
+    Msg("handleToggleWindow: "..tname..", "..fxname.." (openclose: "..openclose..", wtype: "..wtype..")")
+  end -- DO_DEBUG
+  
+  rpr.TrackFX_Show(track, index, openclose)  
+  
+  if openclose == wtype then -- just closed, remove from openwin_list, and focus TCP
+    
+    local compare = function(p1, p2) return p1[1] == p2[1] and p1[2] == p2[2] end
+    local ptr = MFXlist.openwin_list:find({track, index}, compare)
+    
+    if ptr then -- what if not found (we get nil here)?
+      
+      MFXlist.openwin_list:remove(ptr)
+      
+    end
+    
+    if nil then -- DO_DEBUG then
+      local str = (not ptr and "nil!" or "found")
+      Msg("Window "..str..", list size: "..MFXlist.openwin_list.length)
+    end -- DO_DEBUG
+    
+    focusTCP()
+    
+  else -- just opened, add to openwin_list
+    
+    MFXlist.openwin_list:insert({track, index})
+    
+  end
+  
+end -- handleToggleWindow
 -----------------------------------------
 -- Shows it in Reaper's console (for now)
 -- Not using Msg here, since we want this
@@ -1084,14 +1107,30 @@ local function showInfo()
   
 end -- showInfo
 ---------------------------------------
-local function handleMenu(mcap, mx, my)
-
-  local menustr = MFXlist.MENU_STR
-  if DO_DEBUG and mcap & MFXlist.MOD_KEYS == MFXlist.MOD_CTRL then -- Ctrl only
-    menustr = menustr.." | (Setup 10)"
+local function setupMenu(quickfx)
+  
+  MFXlist.MENU_STR = "Show info|Quit"
+  MFXlist.MENU_SHOWINFO = 1
+  MFXlist.MENU_QUIT = 2
+  
+  if quickfx and MFXlist.MENU_QUICKFX and #MFXlist.MENU_QUICKFX > 0 then
+    
+    MFXlist.MENU_STR = table.concat(MFXlist.MENU_QUICKFX, "|").."||"..MFXlist.MENU_STR
+    
+    local fxnum = #MFXlist.MENU_QUICKFX 
+    MFXlist.MENU_SHOWINFO = fxnum + 1
+    MFXlist.MENU_QUIT = fxnum + 2
+    
   end
   
-  local MENU_SETUP10 = MFXlist.MENU_QUIT + 1 -- Only for debug!
+  return MFXlist.MENU_STR
+  
+end -- setupMenu
+----------------------------------------
+local function handleMenu(mcap, mx, my)
+
+  local track = MFXlist.track_hovered
+  local menustr = setupMenu(track)
   
   gfx.x, gfx.y = mx, my
   local ret = gfx.showmenu(menustr)
@@ -1105,15 +1144,12 @@ local function handleMenu(mcap, mx, my)
     setupForTesting(10)
   elseif 0 < ret and ret < MFXlist.MENU_SHOWINFO then
     
-    local track = MFXlist.track_hovered
-    local fxname = MFXlist.MENU_QUICKFX[ret]
-    
-    if DO_DEBUG then
-      local _, trackname = rpr.GetTrackName(track)
-      Msg("return: "..ret..", FX: "..fxname..", track: "..trackname)
+    if track then
+      
+      local fxname = MFXlist.MENU_QUICKFX[ret]
+      local index = rpr.TrackFX_AddByName(track, fxname, false, -10000)
+      handleToggleWindow(track, index, 2)
     end
-    
-    rpr.TrackFX_AddByName(track, fxname, false, -10000)
   --[[
   elseif ret == MFXlist.MENU_SHOWFIRSTTCP then
     local startt = rpr.time_precise()
@@ -1292,46 +1328,6 @@ local function manageFocus()
   end
   
 end -- manageFocus
------------------------------------------------------------
--- index is here 0-based!
--- wtype is 0 for FX chain window, 2 for floating FX window
-local function handleToggleWindow(track, index, wtype)
-  
-  local openclose = rpr.TrackFX_GetOpen(track, index) and wtype or wtype + 1 -- 0,2: to close, 1,3: to open
-  
-  if nil then -- DO_DEBUG then
-    local _, tname = rpr.GetTrackName(track)
-    local _, fxname = rpr.TrackFX_GetFXName(track, index, "")
-    Msg("handleToggleWindow: "..tname..", "..fxname.." (openclose: "..openclose..", wtype: "..wtype..")")
-  end -- DO_DEBUG
-  
-  rpr.TrackFX_Show(track, index, openclose)  
-  
-  if openclose == wtype then -- just closed, remove from openwin_list, and focus TCP
-    
-    local compare = function(p1, p2) return p1[1] == p2[1] and p1[2] == p2[2] end
-    local ptr = MFXlist.openwin_list:find({track, index}, compare)
-    
-    if ptr then -- what if not found (we get nil here)?
-      
-      MFXlist.openwin_list:remove(ptr)
-      
-    end
-    
-    if nil then -- DO_DEBUG then
-      local str = (not ptr and "nil!" or "found")
-      Msg("Window "..str..", list size: "..MFXlist.openwin_list.length)
-    end -- DO_DEBUG
-    
-    focusTCP()
-    
-  else -- just opened, add to openwin_list
-    
-    MFXlist.openwin_list:insert({track, index})
-    
-  end
-  
-end -- handleToggleWindow
 ----------------------------------------------
 local function handleLeftMBclick(mcap, mx, my)
   
@@ -1722,8 +1718,7 @@ local function initializeScript()
 
   -- initSWSCommands()
   initCommands()
-  initMenu()
-  
+    
   local cx, cy = gfx.screentoclient(x, y)
   MFXlist.TCP_top = cy
   MFXlist.TCP_bot = MFXlist.TCP_top + h
