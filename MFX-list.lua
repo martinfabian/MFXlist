@@ -1312,18 +1312,18 @@ local function handleLeftMBclick(mcap, mx, my)
     return
     
   elseif modkeys == (MFXlist.MOD_SHIFT | MFXlist.MOD_CTRL) then
-    -- Shift+Ctrl
-    -- TODO! Left click over FX with Shift+Ctrl key!
+    -- Shift+Ctrl+Left click on FX, toggle offline/online
+    
+    local isoffline = rpr.TrackFX_GetOffline(track, index-1)
+    rpr.TrackFX_SetOffline(track, index-1, not isoffline)
     -- Set focus to TCP so key strokes go there
     focusTCP()
     return
     
   elseif modkeys == (MFXlist.MOD_CTRL | MFXlist.MOD_ALT) then
-    -- Ctr+Alt+Left click on FX, toggle offline/online
-    
-    local isoffline = rpr.TrackFX_GetOffline(track, index-1)
-    rpr.TrackFX_SetOffline(track, index-1, not isoffline)
+    -- Ctr+Alt
     -- Set focus to TCP so key strokes go there
+    -- TODO! Left click over FX with Ctrl+Alt key!
     focusTCP()
     return
     
