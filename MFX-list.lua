@@ -197,6 +197,7 @@ MFXlist =
   
   openwin_list = nil, -- list of currently open windows to help the external win-close focus issue
   count_down = 0,
+  menu_isopen = false, -- is the right-click menu open?
   
   footer_text = "MFX-list", -- changes after initializing, shows name of currently hovered track
   header_text = "MFX-list", -- this doesn't really change after initialzing, but could if useful
@@ -481,6 +482,7 @@ linkedList = -- has to be global here, made local below
               outputter(ptr.elem)
               ptr = ptr.next
             end
+            outputter("<list end>")
           end, -- print
           
   find = function(self, element, compare)
@@ -721,6 +723,24 @@ local function showTracks(tracks) -- In console output
     end
   end
 end
+-------------------------------
+local function showWindowsList()
+
+  local function outputter(elem)
+    if type(elem) == "string" then
+      Msg(elem)
+    else -- it can only be a table of our known type
+      local track = elem[1]
+      local fxid = elem[2]
+      local _, tname = rpr.GetTrackName(track)
+      local _, fxname = rpr.TrackFX_GetFXName(track, fxid, "")
+      Msg("{"..tname..", "..fxname.."}")
+    end
+  end -- outputter
+  
+  MFXlist.openwin_list:print(outputter)
+  
+end -- showWindowsList
 --------------------------------------------------------
 -- Find the index of the first track visible in the TCP
 -- A track can be invisible from the TCP for two reasons:
@@ -1045,7 +1065,7 @@ end -- drawTracks
 -- wtype is 0 for FX chain window, 2 for floating FX window
 local function handleToggleWindow(track, index, wtype)
   
-  local openclose = rpr.TrackFX_GetOpen(track, index) and wtype or wtype + 1 -- 0,2: to close, 1,3: to open
+  local openclose = (rpr.TrackFX_GetOpen(track, index) and wtype) or wtype + 1 -- 0,2: to close, 1,3: to open
   
   if nil then -- DO_DEBUG then
     local _, tname = rpr.GetTrackName(track)
@@ -1053,6 +1073,10 @@ local function handleToggleWindow(track, index, wtype)
     Msg("handleToggleWindow: "..tname..", "..fxname.." (openclose: "..openclose..", wtype: "..wtype..")")
   end -- DO_DEBUG
   
+  -- 0 to hide chain
+  -- 1 to show chain
+  -- 2 to hide floating win
+  -- 3 to open floating win
   rpr.TrackFX_Show(track, index, openclose)  
   
   if openclose == wtype then -- just closed, remove from openwin_list, and focus TCP
@@ -1113,6 +1137,14 @@ local function setupMenu(quickfx)
   MFXlist.MENU_SHOWINFO = 1
   MFXlist.MENU_QUIT = 2
   
+  if DO_DEBUG and gfx.mouse_cap & MFXlist.MOD_KEYS == MFXlist.MOD_CTRL then
+    
+    -- Msg("Setting up debug menu...")
+    MFXlist.MENU_STR  = MFXlist.MENU_STR.."||Show list"
+    return MFXlist.MENU_STR
+    
+  end
+
   if quickfx and MFXlist.MENU_QUICKFX and #MFXlist.MENU_QUICKFX > 0 then
     
     MFXlist.MENU_STR = table.concat(MFXlist.MENU_QUICKFX, "|").."||"..MFXlist.MENU_STR
@@ -1131,9 +1163,9 @@ local function handleMenu(mcap, mx, my)
 
   local track = MFXlist.track_hovered
   local menustr = setupMenu(track)
-  
+
   gfx.x, gfx.y = mx, my
-  local ret = gfx.showmenu(menustr)
+  local ret = gfx.showmenu(menustr) -- blocking call, no defer cycles until this returns
   if ret == MFXlist.MENU_QUIT then
     return ret
   elseif ret == MFXlist.MENU_SHOWINFO then
@@ -1148,8 +1180,17 @@ local function handleMenu(mcap, mx, my)
       
       local fxname = MFXlist.MENU_QUICKFX[ret]
       local index = rpr.TrackFX_AddByName(track, fxname, false, -10000)
-      handleToggleWindow(track, index, 2)
+      handleToggleWindow(track, index, 2, true) -- true => if window already opened, then don't close it
+      
+      if DO_DEBUG then
+        local _, tname = rpr.GetTrackName(track)
+        Msg("Track: "..tname..", added FX: "..fxname.." as index "..index)
+      end -- DO_DEBUG
+      
     end
+    
+  elseif ret == MFXlist.MENU_QUIT + 1 then -- This is Ctrl+right-click when debug
+    showWindowsList()
   --[[
   elseif ret == MFXlist.MENU_SHOWFIRSTTCP then
     local startt = rpr.time_precise()
