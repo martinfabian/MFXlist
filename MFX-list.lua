@@ -1180,7 +1180,9 @@ local function handleMenu(mcap, mx, my)
       
       local fxname = MFXlist.MENU_QUICKFX[ret]
       local index = rpr.TrackFX_AddByName(track, fxname, false, -10000)
-      handleToggleWindow(track, index, 2, true) -- true => if window already opened, then don't close it
+      -- handleToggleWindow(track, index, 2, true) -- true => if window already opened, then don't close it
+      rpr.TrackFX_Show(track, index, 3) -- 3 == show floating window
+      MFXlist.openwin_list:insert({track, index})      
       
       if DO_DEBUG then
         local _, tname = rpr.GetTrackName(track)
