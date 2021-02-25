@@ -1,17 +1,15 @@
 # MFXlist
-This is a script for the Reaper DAW (digital audio workstation), that adds an FX strip to the left of the TCP for quick and easy access. The original idea comes from Doppelganger's fxlist (https://forum.cockos.com/showthread.php?t=210987), but this is a native ReaScript re-implementation of the FX strip part of fxlist. Just like fxlist, MFXlist packages existing functionality into a better (in my opinion) user interface compared to the existing native implementation; the used screen estate is simply smaller. Doppelganger's fxlist is still functional, but is no longer maintained, which is why I wrote MFXlist.
+This is a script for the Reaper DAW (digital audio workstation), that adds an FX strip to the left of the TCP for quick and easy access. MFXlist packages existing functionality into a better (in my opinion) user interface compared to the existing native implementation; the used screen estate is simply smaller. 
 
 ![](MFXlist.gif)
 
-MFXlist consists of roughly 1300 lines of Lua code, and was developed on Windows, and Reaper v6.19/x64. It uses the js_ReaScriptAPI extension (https://forum.cockos.com/showthread.php?t=212174), which is apparently available also for Linux and Mac, so the script should work also on those systems, but I have not tried it on either of them. 
+MFXlist consists of roughly 1400 lines of Lua code, and was developed on Windows, and Reaper v6.19/x64. It uses the js_ReaScriptAPI extension (https://forum.cockos.com/showthread.php?t=212174), which is available also for Linux and Mac, so the script should work also on those systems, but I have not tried it on Linux. 
 
 ## Installation
 
-Just download the MFXlist.lua file from the GitHub repo https://github.com/martinfabian/MFXlist and place it in Reaper's Scripts folder. 
+MFXlist is available from the ReaTeam's repo in ReaPack, so the easiest thing is to install it from there. Also js_ReaScriptAPI is easiest installed through ReaPack. Download from https://reapack.com/ the ReaPack suitable for your system, put the file in Reaper's UserPlugins folder. Start Reaper, pull down the Extensions menu, and open ReaPack. There you can search for js_ReaScriptAPI, right-click it and install. You will have to restart Reaper. Then you can install MFXlist in the same way.
 
-The easiest way to install js_ReaScriptAPI is through ReaPack (https://reapack.com/). Download the ReaPack suitable for your system, put the file in Reaper's UserPlugins folder. Start Reaper, pull down the Extensions menu, and open ReaPack. There you can search for js_ReaScriptAPI, right-click it and install. You will have to restart Reaper.
-
-Once that is set up, open Reaper's action list, click New action..., then Load ReaScript..., you get a file dialog where you can select MFXlist.lua. After loading it, if you do not see it in the action list, type "MFX" in the filter bar and it should come up. You start it by double-clicking it, just as any script.
+Once that is set up, open Reaper's action list, click New action..., then Load ReaScript..., you get a file dialog where you can select Fabian_MFXlist.lua. After loading it, if you do not see it in the action list, type "MFX" in the filter bar and it should come up. You start it by double-clicking it, just as any script.
 
 ## First time
 
@@ -31,7 +29,13 @@ MFXlist handles scroll wheel messages, with and without modifier keys, though no
 
 ## Customization
 
-Since this is a script, you can customize it to your heart's content. Just like any programmer I am fully convinced that my code is self-documenting, but I have anyway included comments that might be useful for customization; just look at the code, the easiest customizable stuff is at the top.
+The easiest way to customize MFXlist is to use X-Rayms' preset script (https://gist.github.com/X-Raym/f7f6328b82fe37e5ecbb3b81aff0b744#file-preset-lua). A preset script with the variables that seem useful to customize is available from here https://raw.githubusercontent.com/martinfabian/MFXlist/main/MFXpreset.lua Right-click and Save as.. "MFXpreset.lua" (or whatever) in the same folder as you have the MFXlist script (if you installed through ReaPack this will be Scripts\ReaTeam Scripts\FX). The good thing with presets is that these do not get overwritten by updates of the main script.
+
+Two customizations that are worth mentioning here are:
+* You can replace the standard FX browser with any FX browser you want. I have tested Quick Adder (https://forum.cockos.com/showthread.php?t=232928) and Fast FX Finder (https://forum.cockos.com/showthread.php?t=229807), and the preset file mentioned above shows how this is done. You get from Reaper the command ID of the FX browser you want to use and put it as a string in place of the "nil", where it says "-- Alternative FX browser, put command ID here" in the preset File.
+* You can also add special FX that you want to have accessible on MFXlist's right-click menu. By default, ReaEQ, ReaComp, ReaFIR and ReaDelay are on the right-click menu, but these can be changed by replacing these names in the preset file.
+
+Now, since MFXlist is an ordinary Reaper Lua script, you have access to the source code and can customize it to your heart's content if you do not want to use a preset script. Just like any programmer I am fully convinced that my code is self-documenting, but I have anyway included comments that might be useful for customization; just look at the code, the easiest customizable stuff is at the top.
 
 ## Enhancements
 
@@ -45,4 +49,4 @@ MFXlist does not work on Reaper v5 or earlier.
 
 ## Unknown issues
 
-Please report to me. Posting in the MFXlist thread on teh Reaper forum (https://forum.cockos.com/showthread.php?p=2395407) will work.
+Please report to me. Posting in the MFXlist thread on the Reaper forum (https://forum.cockos.com/showthread.php?p=2395407) will work.
