@@ -1,14 +1,13 @@
--- @description FX list for Reaper left docker (MFX-list)
+-- @description FX list for Reaper left docker (MFXlist)
 -- @author M Fabian, inlcudes code by Edgemeal
 -- @SCRIPT_version 0.9.8
 -- @changelog
 --   Nothing yet, or rather... everything
 -- @link
---   Forum Thread https://forum.cockos.com/showthread.php?t=210987
+--   Forum Thread https://forum.cockos.com/showthread.php?p=2395407
 -- @screenshot 
 -- @donation something.good.for.humankind 
 -- @about
---   # Native ReaScript reimplementation of Doppelganger's FXlist (only the FX part, not the send stuff etc)
 --   # Needs the js_ReaScriptAPI (tested with reaper_js_ReaScriptAPI64.dll) by 
 --   #         Julian Sander, https://forum.cockos.com/showthread.php?t=212174
 --   # Developed using ZeroBrane Studio as IDE, https://studio.zerobrane.com/
