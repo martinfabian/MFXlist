@@ -1,6 +1,6 @@
 -- @description FX list for Reaper left docker (MFXlist)
 -- @author M Fabian, inlcudes code by Edgemeal and others
--- @SCRIPT_version 0.9.8
+-- @SCRIPT_version 0.9.9
 -- @changelog
 --   Nothing yet, or rather... everything
 -- @link
@@ -60,7 +60,7 @@ MFXlist =
   FONT_INVFLAG = 0x56000000,    -- invert  
   
   -- Script specific constants, from here below change only if you really know what you are doing
-  SCRIPT_VERSION = "v0.9.8",
+  SCRIPT_VERSION = "v0.9.9",
   SCRIPT_NAME = "MFX-list",
   SCRIPT_AUTHORS = {"M Fabian"},
   SCRIPT_YEAR = "2020-2021",
