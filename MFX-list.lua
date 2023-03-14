@@ -182,6 +182,8 @@ MFXlist =
   BLITBUF_HEADW = 300,
   BLITBUF_HEADH = 300,
   
+  MAX_TRIES = 10,
+  
   -- Globally accessible variables used to communicate between different parts of the code
   mouse_y = nil, -- is set to mouse_y when mouse inside MFXlist, else nil
   track_hovered = nil, -- is set to the track (ptr) currently under mouse cursor, nil if mouse outside of client are
@@ -200,6 +202,8 @@ MFXlist =
   
   footer_text = "MFX-list", -- changes after initializing, shows name of currently hovered track
   header_text = "MFX-list", -- this doesn't really change after initialzing, but could if useful
+  
+  num_tries = 0,
 
 }
 local MFXlist = MFXlist -- MFXlist has to be global for preswet to work, here it becmoes local
@@ -1122,7 +1126,7 @@ local function showInfo()
   rpr.ShowConsoleMsg("\nMFXlist header: 0, 0, "..width..", "..math.tointeger(MFXlist.TCP_top)) 
   rpr.ShowConsoleMsg("\nMFXlist track area: 0, "..math.tointeger(MFXlist.TCP_top)..", "..width..", "..math.tointeger(MFXlist.TCP_bot - MFXlist.TCP_top))
   rpr.ShowConsoleMsg("\nMFXlist footer: 0, "..math.tointeger(MFXlist.TCP_bot)..", "..width..", "..math.tointeger(height - MFXlist.TCP_bot))
-  
+  rpr.ShowConsoleMsg("\nNum tries: "..MFXlist.num_tries)
   if DO_DEBUG then
     Msg("\nWhat OS? "..MFXlist.WHAT_OS)
     Msg("gfx.ext_retina: "..gfx.ext_retina)
@@ -1139,7 +1143,7 @@ local function setupMenu(quickfx)
   if DO_DEBUG and gfx.mouse_cap & MFXlist.MOD_KEYS == MFXlist.MOD_CTRL then
     
     -- Msg("Setting up debug menu...")
-    MFXlist.MENU_STR  = MFXlist.MENU_STR.."||Show list"
+    MFXlist.MENU_STR  = MFXlist.MENU_STR.."||Show list|Next docker"
     return MFXlist.MENU_STR
     
   end
@@ -1214,6 +1218,8 @@ local function handleMenu(mcap, mx, my)
   elseif ret == MFXlist.MENU_FINDLEFTDOCK then
     findLeftDock()
   --]]
+  elseif ret == MFXlist.MENU_QUIT + 2 then -- this is Next docker when Ctrl+Right-click
+    switchDocker()
   end
   
   return ret
@@ -1732,6 +1738,18 @@ local function openWindow()
   gfx.init(MFXlist.SCRIPT_NAME, MFXlist.WIN_W, MFXlist.WIN_H, docker, MFXlist.WIN_X, MFXlist.WIN_Y)
   
 end -- openWindow
+------------------------------------------------
+local function tryGetTCPHWND()
+  
+  local hwnd, x, y, w, h = getTCPProperties() -- TCP screen coordinates
+  MFXlist.num_tries = MFXlist.num_tries + 1
+  if hwnd or MFXlist.num_tries > MFXlist.MAX_TRIES  then
+    return hwnd -- if num tries exhausted, hwnd is nil
+  end
+  
+  rpr.defer(tryGetTCPHWND()) -- did not yet get TCP hwnd, not yet tried MAX_TRIES times, try again
+  
+end
 ------------------------------------------------ 
 local function initializeScript()
   
@@ -1858,6 +1876,7 @@ Msg(tprint(tracks))
 
 -- Adding preset awareness here
 function Init()
+  tryGetTCPHWND()
   initializeScript()
   mfxlistMain() -- run main loop
 end
